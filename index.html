@@ -516,9 +516,10 @@ function computePositions(txs, priceMap) {
       symbol = t.symbol; currency = t.currency; market = t.market; if (t.name) name = t.name;
       if (t.type === 'buy') {
         qty = decAdd(qty, t.q);
-        cost = decAdd(cost, decMul(t.p, t.q)); // 成本不含手續費/稅（沿用既有裁決）
-        buyFees = decAdd(buyFees, t.f);
-        buyTax = decAdd(buyTax, t.tax); // 買入若有稅也要記，不可靜默丟失
+        // 成本基礎 = 價×量 + 買入手續費 + 買入稅（使用者裁決：取得成本併入）
+        cost = decAdd(cost, decAdd(decAdd(decMul(t.p, t.q), t.f), t.tax));
+        buyFees = decAdd(buyFees, t.f); // 仍分別記錄，供明細透明呈現
+        buyTax = decAdd(buyTax, t.tax);
         boughtQty = decAdd(boughtQty, t.q);
       } else {
         let sq = t.q;
@@ -678,7 +679,7 @@ if (typeof module !== 'undefined' && module.exports) {
 <script>
 'use strict';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 
 const LS = {
   api: 'etf.apiUrl',
@@ -1151,7 +1152,7 @@ function renderOverview() {
       card.appendChild(el('div', { class: 'warn', text: `已實現損益 ${plSign(s.realized)}${decFormat(s.realized)}（賣出已入袋，含扣手續費與稅）` }));
     }
     if (s.feesAndTax > 0n) {
-      card.appendChild(el('div', { class: 'warn', text: `累積手續費/稅 ${prefix} ${decFormat(s.feesAndTax)}` }));
+      card.appendChild(el('div', { class: 'warn', text: `累積手續費/稅 ${prefix} ${decFormat(s.feesAndTax)}（買入已計入成本、賣出已扣損益）` }));
     }
     if (s.missingPriceCount > 0) {
       card.appendChild(el('div', { class: 'warn', text: `${s.missingPriceCount} 檔持倉目前無報價，總資產與損益未包含該部位。` }));

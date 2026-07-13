@@ -89,16 +89,16 @@ function tx(o) {
 }
 function pos1(txs, priceMap) { return computePositions(txs, priceMap).positions[0]; }
 
-// A. 單次買入 + 未實現
+// A. 單次買入 + 未實現（成本含買入手續費）
 {
   const p = pos1([tx({ quantity: '10', price: '100', fee: '5' })], { VOO: { price: '120', updatedAt: 1, stale: false } });
   eq(decToFixed(p.qty, 0), '10', 'A 持有 10 股');
-  eq(decToFixed(p.avgCost, 2), '100.00', 'A 均價 100');
-  eq(decToFixed(p.cost, 2), '1000.00', 'A 成本 1000（不含手續費）');
-  eq(decToFixed(p.buyFees, 2), '5.00', 'A 買入手續費 5');
+  eq(decToFixed(p.avgCost, 2), '100.50', 'A 均價含手續費 (1000+5)/10=100.50');
+  eq(decToFixed(p.cost, 2), '1005.00', 'A 成本含買入手續費');
+  eq(decToFixed(p.buyFees, 2), '5.00', 'A 買入手續費另記錄供透明呈現');
   eq(decToFixed(p.marketValue, 2), '1200.00', 'A 市值 1200');
-  eq(decToFixed(p.unrealized, 2), '200.00', 'A 未實現 +200');
-  eq(decToFixed(p.unrealizedPct, 2), '20.00', 'A 未實現報酬率 20%');
+  eq(decToFixed(p.unrealized, 2), '195.00', 'A 未實現 1200-1005=195');
+  eq(decToFixed(p.unrealizedPct, 2), '19.40', 'A 報酬率 195/1005=19.40%');
   eq(decToFixed(p.realized, 2), '0.00', 'A 無賣出，已實現 0');
 }
 
@@ -174,12 +174,14 @@ function pos1(txs, priceMap) { return computePositions(txs, priceMap).positions[
   eq(s.hasSell, true, 'G 有賣出紀錄');
 }
 
-// H0. 稽核迴歸：買入的稅不可被靜默丟失（進 feesAndTax，但不進成本基礎）
+// H0. 買入手續費＋稅併入成本（使用者裁決），且仍分別記錄供透明呈現
 {
   const p = pos1([tx({ quantity: '10', price: '100', fee: '5', tax: '7' })], {});
-  eq(decToFixed(p.cost, 2), '1000.00', 'H0 成本仍不含買入稅（維持既有裁決）');
-  eq(decToFixed(p.buyTax, 2), '7.00', 'H0 買入稅有被記錄');
-  eq(decToFixed(p.feesAndTax, 2), '12.00', 'H0 feesAndTax = 買手續費5 + 買稅7（修正前會漏掉稅）');
+  eq(decToFixed(p.cost, 2), '1012.00', 'H0 成本含買入手續費5+稅7');
+  eq(decToFixed(p.avgCost, 2), '101.20', 'H0 均價 1012/10=101.20');
+  eq(decToFixed(p.buyFees, 2), '5.00', 'H0 買入手續費另記錄');
+  eq(decToFixed(p.buyTax, 2), '7.00', 'H0 買入稅另記錄（不再靜默丟失）');
+  eq(decToFixed(p.feesAndTax, 2), '12.00', 'H0 手續費/稅統計 = 5+7');
 }
 
 // H1. 稽核：部分賣出後成本基礎「守恆」——剩餘成本 + 各次賣出對應成本 = 原始總成本（不漏錢）
