@@ -66,6 +66,27 @@
   .asset-card .warn { margin-top: 10px; font-size: .72rem; background: rgba(255,255,255,.18); border-radius: 8px; padding: 6px 8px; }
 
   .section-title { font-size: .95rem; font-weight: 700; margin: 16px 0 8px; }
+
+  /* 退休頁 */
+  .ret-hero { background: linear-gradient(135deg,#16A34A,#15803D); color:#fff; border-radius:18px; padding:18px 16px; margin-bottom:12px; box-shadow:0 4px 14px rgba(22,163,74,.25); }
+  .ret-hero .label { font-size:.8rem; opacity:.85; }
+  .ret-hero .big { font-size:2rem; font-weight:800; letter-spacing:-.5px; margin:2px 0; }
+  .ret-hero .target { font-size:.8rem; opacity:.85; margin-bottom:10px; }
+  .progress { height:12px; background:rgba(255,255,255,.25); border-radius:6px; overflow:hidden; }
+  .progress > span { display:block; height:100%; background:#fff; border-radius:6px; }
+  .ret-hero .pctline { display:flex; justify-content:space-between; font-size:.9rem; font-weight:700; margin-top:8px; }
+  .ret-hero .remain { font-size:.78rem; opacity:.92; margin-top:4px; }
+  .donut-wrap { display:flex; align-items:center; gap:16px; }
+  .donut-wrap .legend { flex:1; font-size:.82rem; color:var(--gray); line-height:1.7; }
+  .donut-wrap .legend b { color:var(--text); }
+  .countdown { display:flex; gap:10px; text-align:center; }
+  .countdown > div { flex:1; }
+  .countdown .num { font-size:1.3rem; font-weight:800; }
+  .countdown .cap { font-size:.7rem; color:var(--gray); margin-top:2px; }
+  .three { display:grid; grid-template-columns:1fr 1fr 1fr; gap:1px; background:var(--border); border-radius:14px; overflow:hidden; }
+  .three > div { background:var(--card); padding:12px 10px; text-align:center; }
+  .three .k { font-size:.7rem; color:var(--gray); }
+  .three .v { font-size:1.05rem; font-weight:800; margin-top:3px; }
   .holding {
     background: var(--card); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px;
     box-shadow: 0 1px 3px rgba(0,0,0,.05);
@@ -73,7 +94,7 @@
   .holding .top { display: flex; justify-content: space-between; align-items: baseline; }
   .holding .symbol { font-weight: 800; font-size: 1.02rem; }
   .holding .name { font-size: .72rem; color: var(--gray); margin-top: 1px; }
-  .holding .pl { text-align: right; font-weight: 700; font-size: .95rem; }
+  .holding .pl { text-align: right; font-weight: 700; font-size: .95rem; white-space: nowrap; }
   .holding .pl-pct { font-size: .75rem; font-weight: 600; }
   .holding .mid { display: flex; justify-content: space-between; margin-top: 8px; font-size: .78rem; color: var(--gray); }
   .holding .mv { font-weight: 700; color: var(--text); }
@@ -272,12 +293,15 @@
   </form>
 </main>
 
+<main id="view-retirement"></main>
+
 <main id="view-settings">
   <div id="setup-banner" class="setup-banner" style="display:none">
     尚未完成連線設定。請依 README 完成 Google Sheet 與 Apps Script 部署後，
     把「網頁應用程式 URL」與你設定的 Secret Key 填入下方並儲存。
   </div>
   <div class="card">
+    <div class="section-title" style="margin-top:0">連線設定</div>
     <form id="settings-form" novalidate>
       <div class="field">
         <label for="s-api">Apps Script API 網址（/exec 結尾）</label>
@@ -295,6 +319,44 @@
       </p>
     </form>
   </div>
+  <div class="card">
+    <div class="section-title" style="margin-top:0">退休目標設定</div>
+    <form id="retire-form" novalidate>
+      <div class="field">
+        <label for="r-target">退休目標金額（TWD）</label>
+        <input id="r-target" inputmode="decimal" autocomplete="off" placeholder="20000000">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="r-monthly">每月投入（TWD）</label>
+          <input id="r-monthly" inputmode="decimal" autocomplete="off" placeholder="30000">
+        </div>
+        <div class="field">
+          <label for="r-rate">預期年化報酬率（%）</label>
+          <input id="r-rate" inputmode="decimal" autocomplete="off" placeholder="7">
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="r-fx">USD → TWD 匯率</label>
+          <input id="r-fx" inputmode="decimal" autocomplete="off" placeholder="32.5">
+        </div>
+        <div class="field">
+          <label for="r-age">目標退休年齡（參考）</label>
+          <input id="r-age" inputmode="numeric" autocomplete="off" placeholder="50">
+        </div>
+      </div>
+      <div class="field">
+        <label for="r-extra">額外資產／現金（TWD，選填）</label>
+        <input id="r-extra" inputmode="decimal" autocomplete="off" placeholder="0">
+      </div>
+      <button class="btn-primary" type="submit">儲存退休設定</button>
+      <p class="hint">
+        匯率用來把美股資產與美元已實現獲利換算成台幣加總（標示為「估算」，非即時匯率）。<br>
+        這些設定只存在本機瀏覽器，換裝置需重新填寫。
+      </p>
+    </form>
+  </div>
 </main>
 
 <nav>
@@ -309,6 +371,10 @@
   <button data-view="add">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
     新增
+  </button>
+  <button data-view="retirement">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>
+    退休
   </button>
   <button data-view="settings">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -420,6 +486,7 @@ function computePositions(txs, priceMap) {
   priceMap = priceMap || {};
   const groups = new Map();
   const skipped = [];
+  const realizedEvents = []; // 每筆賣出一個事件（供賣出紀錄、本月/今年統計）
   for (const t of txs) {
     const q = decParse(t.quantity);
     const p = decParse(t.price);
@@ -460,12 +527,20 @@ function computePositions(txs, priceMap) {
           const costOfSold = decMul(avg, sq);
           const proceeds = decMul(t.p, sq);
           // Master Spec §5.2：已實現 = 賣出收入 − 對應成本 − 賣出手續費 − 賣出稅
-          realized = decAdd(realized, decSub(decSub(decSub(proceeds, costOfSold), t.f), t.tax));
+          const eventPl = decSub(decSub(decSub(proceeds, costOfSold), t.f), t.tax);
+          realized = decAdd(realized, eventPl);
           sellFees = decAdd(sellFees, t.f);
           sellTax = decAdd(sellTax, t.tax);
           qty = decSub(qty, sq);
           cost = decSub(cost, costOfSold);
           soldQty = decAdd(soldQty, sq);
+          realizedEvents.push({
+            id: t.id, symbol: t.symbol, currency: t.currency, market: t.market, name: t.name || '',
+            tradeDate: t.tradeDate, createdAt: t.createdAt,
+            sellQty: sq, sellPrice: t.p, avgCost: avg, buyCost: costOfSold, proceeds: proceeds,
+            fee: t.f, tax: t.tax, realized: eventPl,
+            realizedPct: costOfSold > 0n ? decMul(decDiv(eventPl, costOfSold), DEC_HUNDRED) : null
+          });
         } else {
           oversold = true;
         }
@@ -492,7 +567,7 @@ function computePositions(txs, priceMap) {
     positions.push(pos);
   }
   positions.sort((a, b) => a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0);
-  return { positions, skipped };
+  return { positions, skipped, realizedEvents };
 }
 
 /** 依幣別彙總（跨幣別不相加）。含已實現、未實現、手續費/稅。 */
@@ -530,23 +605,87 @@ function summarizeCurrencies(positions) {
   return arr;
 }
 
+/* ============================================================
+ * 退休/獲利：跨幣別換算與複利預估（純函式，被測試）
+ * 換算成「基準幣別 TWD」時，USD 須乘上使用者提供的匯率，
+ * 若無匯率則回 null（誠實：不換算、不假裝，對應 Master Spec §6）。
+ * ============================================================ */
+
+/** amountUnits(定點) + 幣別 → 換算成 TWD 定點值；USD 但無匯率時回 null。 */
+function toTwdUnits(amountUnits, currency, fxUsdTwdUnits) {
+  if (currency === 'TWD') return amountUnits;
+  if (currency === 'USD') return fxUsdTwdUnits == null ? null : decMul(amountUnits, fxUsdTwdUnits);
+  return null;
+}
+
+/**
+ * 把所有 realizedEvents 換算成 TWD 並依期間彙總。
+ * currentDateNum: 20260713；回 { month, year, all, fxMissing }。
+ * 任一 USD 事件無匯率 → 該事件無法換算，fxMissing=true 且不計入（誠實標記）。
+ */
+function aggregateRealized(events, currentDateNum, fxUsdTwdUnits) {
+  const yyyymm = Math.floor(currentDateNum / 100);      // 202607
+  const yyyy = Math.floor(currentDateNum / 10000);      // 2026
+  let month = DEC_ZERO, year = DEC_ZERO, all = DEC_ZERO, fxMissing = false;
+  for (const e of events) {
+    const twd = toTwdUnits(e.realized, e.currency, fxUsdTwdUnits);
+    if (twd === null) { fxMissing = true; continue; }
+    all = decAdd(all, twd);
+    if (Math.floor(e.tradeDate / 10000) === yyyy) year = decAdd(year, twd);
+    if (Math.floor(e.tradeDate / 100) === yyyymm) month = decAdd(month, twd);
+  }
+  return { month, year, all, fxMissing };
+}
+
+/**
+ * 複利預估達標時間（估算值，非精確金額，故用 Number）。
+ * current/monthly/target 為 TWD 數字；annualRatePct 例如 7。
+ * 回 { alreadyReached, reachable, months, years, days }。
+ */
+function projectRetirement(current, monthly, annualRatePct, target) {
+  current = Number(current) || 0; monthly = Number(monthly) || 0;
+  target = Number(target) || 0; annualRatePct = Number(annualRatePct) || 0;
+  if (target <= 0) return { reachable: false };
+  if (current >= target) return { alreadyReached: true, reachable: true, months: 0, years: 0, days: 0 };
+  const i = annualRatePct / 100 / 12;
+  let n;
+  if (i <= 0) {
+    if (monthly <= 0) return { reachable: false };
+    n = (target - current) / monthly;
+  } else {
+    const a = current + monthly / i;
+    const b = target + monthly / i;
+    if (a <= 0) {
+      if (monthly <= 0) return { reachable: false };
+      n = (target - current) / monthly; // 極端負值退回線性估計
+    } else {
+      const x = b / a; // (1+i)^n
+      if (x <= 1) return { reachable: false };
+      n = Math.log(x) / Math.log(1 + i);
+    }
+  }
+  if (!isFinite(n) || n < 0) return { reachable: false };
+  return { alreadyReached: false, reachable: true, months: n, years: n / 12, days: Math.round(n / 12 * 365.25) };
+}
+
 /* Node 測試環境輸出（瀏覽器中 module 不存在，此段不執行） */
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { DEC_ONE, DEC_ZERO, DEC_HUNDRED, decParse, decRoundDiv, decAdd, decSub, decMul, decDiv, decToFixed, decFormat, decFormatQty, computePositions, summarizeCurrencies };
+  module.exports = { DEC_ONE, DEC_ZERO, DEC_HUNDRED, decParse, decRoundDiv, decAdd, decSub, decMul, decDiv, decToFixed, decFormat, decFormatQty, computePositions, summarizeCurrencies, toTwdUnits, aggregateRealized, projectRetirement };
 }
 </script>
 
 <script>
 'use strict';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 const LS = {
   api: 'etf.apiUrl',
   key: 'etf.secretKey',
   tx: 'etf.cache.transactions',
   px: 'etf.cache.prices',
-  syncedAt: 'etf.cache.syncedAt'
+  syncedAt: 'etf.cache.syncedAt',
+  retire: 'etf.retire'
 };
 
 const CURRENCY_PREFIX = { USD: 'US$', TWD: 'NT$' };
@@ -750,7 +889,7 @@ function computePortfolio() { return computePositions(state.tx, currentPriceMap(
 
 // ---------- 畫面 ----------
 
-const VIEW_TITLES = { overview: '總覽', transactions: '交易紀錄', add: '新增交易', settings: '設定' };
+const VIEW_TITLES = { overview: '總覽', transactions: '交易紀錄', add: '新增交易', retirement: '獲利與退休', settings: '設定' };
 
 function switchView(name) {
   for (const m of document.querySelectorAll('main')) m.classList.remove('active');
@@ -768,7 +907,207 @@ function plSign(units) { return units < 0n ? '' : '+'; }
 function render() {
   renderOverview();
   renderTransactions();
+  renderRetirement();
   updateSyncStatusLine();
+}
+
+// ---------- 退休設定存取 ----------
+
+function getRetire() {
+  const d = loadCache(LS.retire, {}) || {};
+  return {
+    target: d.target || '', monthly: d.monthly || '',
+    rate: (d.rate === undefined || d.rate === '') ? '7' : String(d.rate),
+    fx: d.fx || '', extra: d.extra || '0', age: d.age || ''
+  };
+}
+
+function unitsToNum(units) { return Number(decToFixed(units, 2)); }
+
+function htmlNode(html) {
+  const d = document.createElement('div');
+  d.innerHTML = html.trim();
+  return d.firstElementChild;
+}
+
+function donutSvg(pctNum) {
+  const p = Math.max(0, Math.min(100, pctNum));
+  const r = 52, c = 2 * Math.PI * r, off = c * (1 - p / 100);
+  return `<svg viewBox="0 0 140 140" width="130" height="130" aria-hidden="true">
+    <circle cx="70" cy="70" r="${r}" fill="none" stroke="#E5E7EB" stroke-width="14"/>
+    <circle cx="70" cy="70" r="${r}" fill="none" stroke="#16A34A" stroke-width="14" stroke-linecap="round"
+      stroke-dasharray="${c.toFixed(2)}" stroke-dashoffset="${off.toFixed(2)}" transform="rotate(-90 70 70)"/>
+    <text x="70" y="66" text-anchor="middle" font-size="22" font-weight="800" fill="#16A34A">${p.toFixed(1)}%</text>
+    <text x="70" y="88" text-anchor="middle" font-size="11" fill="#6B7280">完成度</text>
+  </svg>`;
+}
+
+function todayNum() {
+  const d = new Date();
+  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+}
+
+function retireEmpty(root, msg) {
+  root.appendChild(el('div', { class: 'empty', text: msg }));
+  const btn = el('button', { class: 'btn-primary', type: 'button', text: '前往退休設定' });
+  btn.style.maxWidth = '260px';
+  btn.style.margin = '0 auto';
+  btn.style.display = 'block';
+  btn.addEventListener('click', () => switchView('settings'));
+  root.appendChild(btn);
+}
+
+function statBox(k, v, cls) {
+  return el('div', {}, [el('div', { class: 'k', text: k }), el('div', { class: `v ${cls || ''}`, text: v })]);
+}
+
+function renderRetirement() {
+  const root = $('view-retirement');
+  root.replaceChildren();
+  if (!hasConfig()) {
+    root.appendChild(el('div', { class: 'empty', text: '尚未完成連線設定，請先到「設定」分頁完成連線。' }));
+    return;
+  }
+  const rs = getRetire();
+  const targetUnits = decParse(rs.target);
+  if (targetUnits === null || targetUnits <= 0n) {
+    retireEmpty(root, '尚未設定退休目標金額。設定後即可看到完成率與預估達標時間。');
+    return;
+  }
+
+  const { positions, realizedEvents } = computePortfolio();
+  const fxUnits = decParse(rs.fx); // null = 未設匯率
+  let fxMissing = false, priceMissing = false;
+  const conv = (units, currency) => {
+    const t = toTwdUnits(units, currency, fxUnits);
+    if (t === null) { fxMissing = true; return DEC_ZERO; }
+    return t;
+  };
+
+  let assets = DEC_ZERO, investedTwd = DEC_ZERO, unrealizedTwd = DEC_ZERO;
+  for (const p of positions) {
+    if (p.qty <= 0n) continue;
+    investedTwd = decAdd(investedTwd, conv(p.cost, p.currency));
+    if (p.price === null) { priceMissing = true; continue; }
+    assets = decAdd(assets, conv(p.marketValue, p.currency));
+    unrealizedTwd = decAdd(unrealizedTwd, conv(p.unrealized, p.currency));
+  }
+  const extraUnits = decParse(rs.extra);
+  if (extraUnits !== null && extraUnits > 0n) assets = decAdd(assets, extraUnits);
+
+  const realizedAgg = aggregateRealized(realizedEvents, todayNum(), fxUnits);
+  if (realizedAgg.fxMissing) fxMissing = true;
+  const lifetime = decAdd(realizedAgg.all, unrealizedTwd);
+
+  const pct = decMul(decDiv(assets, targetUnits), DEC_HUNDRED);
+  const pctNum = unitsToNum(pct);
+  const remaining = decSub(targetUnits, assets);
+
+  // ===== 頂部：退休目標總覽 =====
+  const hero = el('div', { class: 'ret-hero' });
+  hero.appendChild(el('div', { class: 'label', text: '目前退休資產（TWD 估算）' }));
+  hero.appendChild(el('div', { class: 'big', text: `NT$ ${decFormat(assets)}` }));
+  hero.appendChild(el('div', { class: 'target', text: `退休目標 NT$ ${decFormat(targetUnits)}` }));
+  const bar = el('div', { class: 'progress' });
+  bar.appendChild(el('span', { style: `width:${Math.max(0, Math.min(100, pctNum))}%` }));
+  hero.appendChild(bar);
+  hero.appendChild(el('div', { class: 'pctline' }, [
+    el('div', { text: `完成 ${decToFixed(pct, 2)}%` }),
+    el('div', { text: remaining <= 0n ? '🎉 已達標' : `還差 NT$ ${decFormat(remaining)}` })
+  ]));
+  root.appendChild(hero);
+
+  // ===== 甜甜圈 + 預估退休倒數 =====
+  const monthlyNum = rs.monthly ? unitsToNum(decParse(rs.monthly) || DEC_ZERO) : 0;
+  const rateNum = Number(rs.rate) || 0;
+  const proj = projectRetirement(unitsToNum(assets), monthlyNum, rateNum, unitsToNum(targetUnits));
+
+  const donutCard = el('div', { class: 'card' });
+  const dw = el('div', { class: 'donut-wrap' });
+  dw.appendChild(htmlNode(donutSvg(pctNum)));
+  const legend = el('div', { class: 'legend' });
+  legend.appendChild(el('div', {}, [`目前：`, el('b', { text: `NT$ ${decFormat(assets)}` })]));
+  legend.appendChild(el('div', {}, [`目標：`, el('b', { text: `NT$ ${decFormat(targetUnits)}` })]));
+  legend.appendChild(el('div', {}, [`每月投入：`, el('b', { text: `NT$ ${decFormat(decParse(rs.monthly) || DEC_ZERO)}` })]));
+  legend.appendChild(el('div', {}, [`預期年化：`, el('b', { text: `${decToFixed(decParse(rs.rate) || DEC_ZERO, 1)}%` })]));
+  dw.appendChild(legend);
+  donutCard.appendChild(dw);
+  root.appendChild(donutCard);
+
+  const cdCard = el('div', { class: 'card' });
+  cdCard.appendChild(el('div', { class: 'section-title', style: 'margin-top:0', text: '預估退休倒數' }));
+  if (proj.alreadyReached) {
+    cdCard.appendChild(el('div', { class: 'empty', text: '🎉 目前資產已達到退休目標！' }));
+  } else if (!proj.reachable) {
+    cdCard.appendChild(el('div', { class: 'hint', text: '依目前資產、每月投入與報酬率無法估算達標時間（請在設定填入每月投入與預期年化報酬率）。' }));
+  } else {
+    const d = new Date(Date.now() + proj.days * 86400000);
+    const fullY = Math.floor(proj.years);
+    const remD = Math.max(0, Math.round((proj.years - fullY) * 365.25));
+    const cd = el('div', { class: 'countdown' });
+    cd.appendChild(el('div', {}, [el('div', { class: 'num', text: `${d.getFullYear()}/${pad2(d.getMonth()+1)}/${pad2(d.getDate())}` }), el('div', { class: 'cap', text: '預估退休日期' })]));
+    cd.appendChild(el('div', {}, [el('div', { class: 'num', text: `${fullY} 年 ${remD} 天` }), el('div', { class: 'cap', text: '距離退休' })]));
+    cd.appendChild(el('div', {}, [el('div', { class: 'num', text: `${proj.days.toLocaleString()}` }), el('div', { class: 'cap', text: '共剩餘（天）' })]));
+    cdCard.appendChild(cd);
+    cdCard.appendChild(el('div', { class: 'hint', text: `依複利模型：目前 NT$ ${decFormat(assets)}，每月投入 NT$ ${decFormat(decParse(rs.monthly) || DEC_ZERO)}，年化 ${decToFixed(decParse(rs.rate) || DEC_ZERO, 1)}%。為估算值，非保證。` }));
+  }
+  root.appendChild(cdCard);
+
+  // ===== 已實現獲利 本月/今年/歷史 =====
+  root.appendChild(el('div', { class: 'section-title', text: '已實現獲利（TWD 估算）' }));
+  const three = el('div', { class: 'three' });
+  three.appendChild(el('div', {}, [el('div', { class: 'k', text: '本月' }), el('div', { class: `v ${plClass(realizedAgg.month)}`, text: `${plSign(realizedAgg.month)}${decFormat(realizedAgg.month)}` })]));
+  three.appendChild(el('div', {}, [el('div', { class: 'k', text: '今年' }), el('div', { class: `v ${plClass(realizedAgg.year)}`, text: `${plSign(realizedAgg.year)}${decFormat(realizedAgg.year)}` })]));
+  three.appendChild(el('div', {}, [el('div', { class: 'k', text: '歷史累積' }), el('div', { class: `v ${plClass(realizedAgg.all)}`, text: `${plSign(realizedAgg.all)}${decFormat(realizedAgg.all)}` })]));
+  root.appendChild(three);
+
+  // ===== 累積投資成果 4 張卡 =====
+  root.appendChild(el('div', { class: 'section-title', text: '累積投資成果（TWD 估算）' }));
+  const grid = el('div', { class: 'stat-grid' });
+  grid.appendChild(statBox('目前投入本金', `NT$ ${decFormat(investedTwd)}`));
+  grid.appendChild(statBox('累積已實現獲利', `${plSign(realizedAgg.all)}${decFormat(realizedAgg.all)}`, plClass(realizedAgg.all)));
+  grid.appendChild(statBox('目前未實現損益', `${plSign(unrealizedTwd)}${decFormat(unrealizedTwd)}`, plClass(unrealizedTwd)));
+  grid.appendChild(statBox('投資生涯總獲利', `${plSign(lifetime)}${decFormat(lifetime)}`, plClass(lifetime)));
+  root.appendChild(grid);
+
+  // ===== 警告 =====
+  if (fxMissing) {
+    root.appendChild(el('div', { class: 'setup-banner', text: '⚠ 你有美元（USD）資產或已實現獲利，但尚未設定 USD→TWD 匯率，這些金額未計入上方 TWD 總計。請到設定填入匯率。' }));
+  }
+  if (priceMissing) {
+    root.appendChild(el('div', { class: 'hint', text: '⚠ 有持倉目前無報價，未計入退休資產。' }));
+  }
+
+  // ===== 賣出紀錄 =====
+  const sells = [...realizedEvents].sort((a, b) => (b.tradeDate - a.tradeDate) || (b.createdAt - a.createdAt));
+  root.appendChild(el('div', { class: 'section-title', text: `已賣出投資紀錄（${sells.length}）` }));
+  if (sells.length === 0) {
+    root.appendChild(el('div', { class: 'hint', text: '目前還沒有賣出紀錄。賣出後這裡會列出每筆的已實現獲利與報酬率。' }));
+  }
+  for (const e of sells) {
+    const prefix = CURRENCY_PREFIX[e.currency] || e.currency;
+    const item = el('div', { class: 'holding' });
+    item.style.cursor = 'default';
+    const top = el('div', { class: 'top' });
+    top.appendChild(el('div', {}, [
+      el('div', { class: 'symbol', text: e.symbol }),
+      el('div', { class: 'name', text: `${e.name || ''}${e.name ? '　' : ''}${MARKET_LABEL[e.market] || e.market}　${formatDateNum(e.tradeDate)}` })
+    ]));
+    top.appendChild(el('div', { class: `pl ${plClass(e.realized)}` }, [
+      `${plSign(e.realized)}${prefix} ${decFormat(e.realized)}`,
+      el('div', { class: 'pl-pct', text: e.realizedPct === null ? '' : `${plSign(e.realizedPct)}${decToFixed(e.realizedPct, 2)}%` })
+    ]));
+    item.appendChild(top);
+    const mid = el('div', { class: 'mid' });
+    mid.appendChild(el('div', { text: `賣 ${decFormatQty(e.sellQty)} 股 @ ${decFormat(e.sellPrice)}（均成本 ${decFormat(e.avgCost)}）` }));
+    mid.appendChild(el('div', { class: 'mv', text: `收入 ${prefix} ${decFormat(e.proceeds)}` }));
+    item.appendChild(mid);
+    const costs = [`成本 ${decFormat(e.buyCost)}`];
+    if (e.fee > 0n) costs.push(`手續費 ${decFormat(e.fee)}`);
+    if (e.tax > 0n) costs.push(`稅 ${decFormat(e.tax)}`);
+    item.appendChild(el('div', { class: 'price-line' }, [el('div', { text: costs.join('｜') }), el('div', {})]));
+    root.appendChild(item);
+  }
 }
 
 function renderOverview() {
@@ -1228,6 +1567,44 @@ function initSettings() {
   });
 }
 
+function initRetireForm() {
+  const rs = getRetire();
+  $('r-target').value = rs.target;
+  $('r-monthly').value = rs.monthly;
+  $('r-rate').value = rs.rate;
+  $('r-fx').value = rs.fx;
+  $('r-extra').value = rs.extra === '0' ? '' : rs.extra;
+  $('r-age').value = rs.age;
+
+  $('retire-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const okNum = (v, allowEmpty) => {
+      const s = String(v).trim();
+      if (s === '') return allowEmpty ? '' : null;
+      return /^\d+(\.\d+)?$/.test(s) ? s : null;
+    };
+    const target = okNum($('r-target').value, false);
+    const monthly = okNum($('r-monthly').value, true);
+    const rate = okNum($('r-rate').value, true);
+    const fx = okNum($('r-fx').value, true);
+    const extra = okNum($('r-extra').value, true);
+    const age = okNum($('r-age').value, true);
+    if (target === null || !(Number(target) > 0)) return toast('退休目標金額必須是大於 0 的數字');
+    if (monthly === null) return toast('每月投入格式不正確');
+    if (rate === null) return toast('年化報酬率格式不正確');
+    if (fx === null) return toast('匯率格式不正確');
+    if (extra === null) return toast('額外資產格式不正確');
+    if (age === null) return toast('退休年齡格式不正確');
+
+    saveCache(LS.retire, {
+      target, monthly, rate: rate === '' ? '7' : rate, fx, extra: extra === '' ? '0' : extra, age
+    });
+    toast('退休設定已儲存');
+    renderRetirement();
+    switchView('retirement');
+  });
+}
+
 // ---------- 啟動 ----------
 
 function init() {
@@ -1242,6 +1619,7 @@ function init() {
 
   initAddForm();
   initSettings();
+  initRetireForm();
 
   // 先用本機快取畫出畫面（標記非即時），再嘗試同步
   state.tx = loadCache(LS.tx, []);

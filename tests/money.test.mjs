@@ -13,7 +13,7 @@ if (!m) { console.error('FAIL: index.html 找不到 money-math script 區塊'); 
 
 const moduleObj = { exports: {} };
 vm.runInNewContext(m[1], { module: moduleObj, console });
-const { decParse, decAdd, decSub, decMul, decDiv, decToFixed, decFormat, decFormatQty, DEC_HUNDRED, DEC_ZERO, computePositions, summarizeCurrencies } = moduleObj.exports;
+const { decParse, decAdd, decSub, decMul, decDiv, decToFixed, decFormat, decFormatQty, DEC_HUNDRED, DEC_ZERO, computePositions, summarizeCurrencies, toTwdUnits, aggregateRealized, projectRetirement } = moduleObj.exports;
 
 let passed = 0, failed = 0;
 function eq(actual, expected, label) {
@@ -181,6 +181,64 @@ function pos1(txs, priceMap) { return computePositions(txs, priceMap).positions[
     tx({ type: 'sell', quantity: '1', price: '123.456789012345', tradeDate: 20260102 })
   ], {});
   eq(decToFixed(p.realized, 8), '0.00000000', 'H 同價買賣已實現剛好 0，無尾差');
+}
+
+// ==================== 已實現事件、換算、退休預估 ====================
+
+// I. realizedEvents：每筆賣出一個事件，含報酬率（對照需求 §五範例）
+{
+  const { realizedEvents } = computePositions([
+    tx({ symbol: 'VOO', quantity: '10', price: '420' }),
+    tx({ symbol: 'VOO', type: 'sell', quantity: '5', price: '510', fee: '11.5', tax: '0', tradeDate: 20260710 })
+  ], {});
+  eq(realizedEvents.length, 1, 'I 一筆賣出 → 一個事件');
+  const e = realizedEvents[0];
+  eq(decToFixed(e.buyCost, 2), '2100.00', 'I 賣出對應成本 420×5=2100');
+  eq(decToFixed(e.proceeds, 2), '2550.00', 'I 賣出收入 510×5=2550');
+  eq(decToFixed(e.realized, 2), '438.50', 'I 已實現 2550-2100-11.5=438.50（對照需求範例）');
+  eq(decToFixed(e.realizedPct, 2), '20.88', 'I 報酬率 438.5/2100=20.88%（對照需求範例）');
+}
+
+// J. 跨幣別換算 TWD
+{
+  const fx = decParse('32'); // 1 USD = 32 TWD
+  eq(decToFixed(toTwdUnits(decParse('100'), 'USD', fx), 2), '3200.00', 'J USD 100 → TWD 3200');
+  eq(decToFixed(toTwdUnits(decParse('100'), 'TWD', fx), 2), '100.00', 'J TWD 原值不變');
+  eq(toTwdUnits(decParse('100'), 'USD', null), null, 'J USD 無匯率 → null（不假裝換算）');
+}
+
+// K. 已實現期間彙總（本月/今年/歷史），USD 事件依匯率換算
+{
+  const events = [
+    { currency: 'TWD', realized: decParse('10000'), tradeDate: 20260705 }, // 本月本年
+    { currency: 'TWD', realized: decParse('5000'), tradeDate: 20260112 },  // 今年非本月
+    { currency: 'USD', realized: decParse('100'), tradeDate: 20260706 },   // 本月，×32=3200
+    { currency: 'TWD', realized: decParse('9999'), tradeDate: 20251230 }   // 去年
+  ];
+  const r = aggregateRealized(events, 20260713, decParse('32'));
+  eq(decToFixed(r.month, 2), '13200.00', 'K 本月 = 10000 + 100USD×32');
+  eq(decToFixed(r.year, 2), '18200.00', 'K 今年 = 10000+5000+3200');
+  eq(decToFixed(r.all, 2), '28199.00', 'K 歷史全部含去年 9999');
+  eq(r.fxMissing, false, 'K 有匯率不缺');
+}
+{
+  const r = aggregateRealized([{ currency: 'USD', realized: decParse('100'), tradeDate: 20260706 }], 20260713, null);
+  eq(r.fxMissing, true, 'K USD 事件無匯率 → 標記 fxMissing 且不計入');
+  eq(decToFixed(r.all, 2), '0.00', 'K 無法換算的事件不硬加');
+}
+
+// L. 退休複利預估
+{
+  const r = projectRetirement(3250000, 30000, 7, 20000000);
+  eq(r.reachable, true, 'L 可達標');
+  eq(Math.round(r.years * 10) / 10, 15.7, 'L 約 15.7 年（複利模型）');
+  eq(r.days > 5000 && r.days < 6500, true, 'L 天數落在合理區間');
+}
+{
+  eq(projectRetirement(25000000, 0, 7, 20000000).alreadyReached, true, 'L 已達標');
+  eq(projectRetirement(0, 0, 7, 20000000).reachable, false, 'L 無本金無投入無法達標');
+  const zeroRate = projectRetirement(0, 100000, 0, 1200000);
+  eq(Math.round(zeroRate.months), 12, 'L 0% 報酬：120萬÷月10萬=12個月');
 }
 
 console.log(`money-math: ${passed} passed, ${failed} failed`);
