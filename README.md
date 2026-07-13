@@ -49,6 +49,22 @@ Google Sheets 當資料庫、Apps Script 當 API、GitHub Pages 託管的單檔 
 - **API 失敗**：顯示最後成功價 + 更新時間 + 「非即時」徽章；完全無價 → 「無報價」徽章且該部位不計入總資產（卡片上明示）。不假裝舊價即時、不空白、不崩潰。
 - **禁止**：AI 股價預測、跨幣別總資產相加。
 
+## Mac 桌面圖示（可選）
+
+兩種方式：
+
+**A. Safari 加入 Dock（最像原生 App，推薦）**
+Safari 開 App 網址 → 選單「檔案 → 加入 Dock」→ 加入。獨立視窗、有綠色圖示。
+
+**B. 桌面 `.app`（雙擊用預設瀏覽器開）**
+執行 `scripts/build-mac-app.sh`（一鍵重建，換電腦時可重跑）：
+
+```bash
+bash scripts/build-mac-app.sh
+```
+
+會用 `icons/icon-512.png` 產生 `.icns`，在桌面建立 `ETF投資追蹤.app`。首次雙擊若被 Gatekeeper 擋，右鍵 →「打開」放行一次即可。
+
 ## v1 範圍（刻意不做）
 
 股息、賣出、匯率換算、圖表分析、歷史走勢、今日損益（需前收價）、Service Worker 離線快取（家庭帳本經驗：快取問題大於收益）。
