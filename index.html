@@ -107,6 +107,14 @@
   form input:focus, form select:focus { outline: 2px solid var(--green); border-color: transparent; }
   .field-row { display: flex; gap: 10px; }
   .field-row .field { flex: 1; }
+  .seg { display: flex; background: #E5E7EB; border-radius: 12px; padding: 3px; margin-bottom: 14px; }
+  .seg button {
+    flex: 1; border: none; background: none; padding: 10px; font-size: 1rem; font-weight: 700;
+    border-radius: 9px; color: var(--gray); cursor: pointer;
+  }
+  .seg button.on-buy { background: var(--green); color: #fff; }
+  .seg button.on-sell { background: var(--red); color: #fff; }
+  .avail-hint { font-size: .74rem; color: var(--gray); margin: -6px 0 12px; min-height: 1em; }
   .btn-primary {
     width: 100%; padding: 14px; font-size: 1.05rem; font-weight: 700;
     background: var(--green); color: #fff; border: none; border-radius: 14px; cursor: pointer;
@@ -201,6 +209,10 @@
 
 <main id="view-add">
   <form id="add-form" novalidate>
+    <div class="seg" id="type-seg">
+      <button type="button" data-type="buy" class="on-buy">買入</button>
+      <button type="button" data-type="sell">賣出</button>
+    </div>
     <div class="field-row">
       <div class="field">
         <label for="f-symbol">ETF 代號</label>
@@ -214,6 +226,7 @@
         </select>
       </div>
     </div>
+    <div class="avail-hint" id="avail-hint"></div>
     <div class="field">
       <label for="f-name">ETF 名稱（選填）</label>
       <input id="f-name" autocomplete="off" placeholder="Vanguard S&amp;P 500 ETF">
@@ -238,12 +251,16 @@
         <input id="f-fee" inputmode="decimal" autocomplete="off" placeholder="0" value="0">
       </div>
       <div class="field">
-        <label for="f-currency">幣別</label>
-        <select id="f-currency">
-          <option value="USD">USD</option>
-          <option value="TWD">TWD</option>
-        </select>
+        <label for="f-tax" id="f-tax-label">稅（賣出用）</label>
+        <input id="f-tax" inputmode="decimal" autocomplete="off" placeholder="0" value="0">
       </div>
+    </div>
+    <div class="field">
+      <label for="f-currency">幣別</label>
+      <select id="f-currency">
+        <option value="USD">USD</option>
+        <option value="TWD">TWD</option>
+      </select>
     </div>
     <div class="field">
       <label for="f-note">備註（選填）</label>
@@ -388,16 +405,141 @@ function decFormatQty(units) {
   return s;
 }
 
+/* ============================================================
+ * 投資組合計算引擎（純函式，被 tests/money.test.mjs 實跑）
+ * 加權平均成本法；支援買入與賣出（部分/全部）。
+ * ============================================================ */
+
+/**
+ * txs 每筆需含：symbol, currency, market, name, type('buy'|'sell'),
+ *   tradeDate(數字), createdAt(數字), price, quantity, fee, tax。
+ * priceMap: { SYMBOL: { price, updatedAt, dataSource, stale } }。
+ * 回傳 { positions, skipped }。positions 含已結清（qty=0）者，其 realized 仍保留。
+ */
+function computePositions(txs, priceMap) {
+  priceMap = priceMap || {};
+  const groups = new Map();
+  const skipped = [];
+  for (const t of txs) {
+    const q = decParse(t.quantity);
+    const p = decParse(t.price);
+    const f = decParse(t.fee === '' || t.fee == null ? '0' : t.fee);
+    const tax = decParse(t.tax === '' || t.tax == null ? '0' : t.tax);
+    if (q === null || p === null || f === null || tax === null || q <= 0n || p <= 0n || f < 0n || tax < 0n) {
+      skipped.push(t.id); continue;
+    }
+    const key = t.symbol + '|' + t.currency;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({
+      id: t.id, symbol: t.symbol, currency: t.currency, market: t.market, name: t.name || '',
+      type: t.type === 'sell' ? 'sell' : 'buy',
+      tradeDate: Number(t.tradeDate) || 0, createdAt: Number(t.createdAt) || 0,
+      q, p, f, tax
+    });
+  }
+  const positions = [];
+  for (const list of groups.values()) {
+    // 依交易日→建立時間排序，確保賣出時的平均成本用的是當下狀態
+    list.sort((a, b) => (a.tradeDate - b.tradeDate) || (a.createdAt - b.createdAt));
+    let qty = DEC_ZERO, cost = DEC_ZERO, buyFees = DEC_ZERO;
+    let realized = DEC_ZERO, sellFees = DEC_ZERO, sellTax = DEC_ZERO;
+    let boughtQty = DEC_ZERO, soldQty = DEC_ZERO, oversold = false;
+    let name = '', market = '', symbol = '', currency = '';
+    for (const t of list) {
+      symbol = t.symbol; currency = t.currency; market = t.market; if (t.name) name = t.name;
+      if (t.type === 'buy') {
+        qty = decAdd(qty, t.q);
+        cost = decAdd(cost, decMul(t.p, t.q)); // 成本不含手續費（沿用既有裁決）
+        buyFees = decAdd(buyFees, t.f);
+        boughtQty = decAdd(boughtQty, t.q);
+      } else {
+        let sq = t.q;
+        if (sq > qty) { oversold = true; sq = qty; } // 不能賣超過持有，clamp 到持有量
+        if (qty > 0n && sq > 0n) {
+          const avg = decDiv(cost, qty);
+          const costOfSold = decMul(avg, sq);
+          const proceeds = decMul(t.p, sq);
+          // Master Spec §5.2：已實現 = 賣出收入 − 對應成本 − 賣出手續費 − 賣出稅
+          realized = decAdd(realized, decSub(decSub(decSub(proceeds, costOfSold), t.f), t.tax));
+          sellFees = decAdd(sellFees, t.f);
+          sellTax = decAdd(sellTax, t.tax);
+          qty = decSub(qty, sq);
+          cost = decSub(cost, costOfSold);
+          soldQty = decAdd(soldQty, sq);
+        } else {
+          oversold = true;
+        }
+      }
+    }
+    const pos = {
+      symbol, currency, market, name,
+      qty, cost, buyFees, realized, sellFees, sellTax,
+      feesAndTax: decAdd(decAdd(buyFees, sellFees), sellTax),
+      boughtQty, soldQty, oversold,
+      avgCost: qty > 0n ? decDiv(cost, qty) : DEC_ZERO,
+      price: null
+    };
+    const px = priceMap[symbol];
+    if (qty > 0n && px && px.price != null && decParse(px.price) !== null) {
+      pos.price = decParse(px.price);
+      pos.priceUpdatedAt = px.updatedAt;
+      pos.priceStale = Boolean(px.stale);
+      pos.dataSource = px.dataSource || '';
+      pos.marketValue = decMul(pos.price, qty);
+      pos.unrealized = decSub(pos.marketValue, cost);
+      pos.unrealizedPct = cost > 0n ? decMul(decDiv(pos.unrealized, cost), DEC_HUNDRED) : null;
+    }
+    positions.push(pos);
+  }
+  positions.sort((a, b) => a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0);
+  return { positions, skipped };
+}
+
+/** 依幣別彙總（跨幣別不相加）。含已實現、未實現、手續費/稅。 */
+function summarizeCurrencies(positions) {
+  const map = new Map();
+  for (const pos of positions) {
+    let s = map.get(pos.currency);
+    if (!s) {
+      s = { currency: pos.currency, invested: DEC_ZERO, marketValue: DEC_ZERO, pricedCost: DEC_ZERO,
+            unrealized: DEC_ZERO, realized: DEC_ZERO, feesAndTax: DEC_ZERO,
+            heldCount: 0, missingPriceCount: 0, hasStale: false, hasSell: false };
+      map.set(pos.currency, s);
+    }
+    s.realized = decAdd(s.realized, pos.realized);
+    s.feesAndTax = decAdd(s.feesAndTax, pos.feesAndTax);
+    if (pos.soldQty > 0n) s.hasSell = true;
+    if (pos.qty > 0n) {
+      s.heldCount += 1;
+      s.invested = decAdd(s.invested, pos.cost);
+      if (pos.price !== null) {
+        s.marketValue = decAdd(s.marketValue, pos.marketValue);
+        s.pricedCost = decAdd(s.pricedCost, pos.cost);
+        s.unrealized = decAdd(s.unrealized, pos.unrealized);
+        if (pos.priceStale) s.hasStale = true;
+      } else {
+        s.missingPriceCount += 1;
+      }
+    }
+  }
+  const arr = [...map.values()];
+  for (const s of arr) {
+    s.unrealizedPct = s.pricedCost > 0n ? decMul(decDiv(s.unrealized, s.pricedCost), DEC_HUNDRED) : null;
+  }
+  arr.sort((a, b) => (a.currency === 'TWD' ? 0 : 1) - (b.currency === 'TWD' ? 0 : 1));
+  return arr;
+}
+
 /* Node 測試環境輸出（瀏覽器中 module 不存在，此段不執行） */
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { DEC_ONE, DEC_ZERO, DEC_HUNDRED, decParse, decRoundDiv, decAdd, decSub, decMul, decDiv, decToFixed, decFormat, decFormatQty };
+  module.exports = { DEC_ONE, DEC_ZERO, DEC_HUNDRED, decParse, decRoundDiv, decAdd, decSub, decMul, decDiv, decToFixed, decFormat, decFormatQty, computePositions, summarizeCurrencies };
 }
 </script>
 
 <script>
 'use strict';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 const LS = {
   api: 'etf.apiUrl',
@@ -592,83 +734,23 @@ function updateSyncStatusLine() {
   setSyncStatus(parts.join('　'));
 }
 
-// ---------- 持倉計算（加權平均成本，手續費不計入成本 — 沿用原生 App Phase 1 裁決）----------
+// ---------- 持倉計算（委派給 money-math 的純函式引擎）----------
 
-function computeHoldings(txs) {
-  const map = new Map();
-  const skipped = [];
-  for (const t of txs) {
-    const q = decParse(t.quantity);
-    const p = decParse(t.price);
-    const f = decParse(t.fee === '' || t.fee === undefined ? '0' : t.fee);
-    if (q === null || p === null || f === null || q <= 0n || p <= 0n) {
-      skipped.push(t.id);
-      continue;
-    }
-    const key = `${t.symbol}|${t.currency}`;
-    let h = map.get(key);
-    if (!h) {
-      h = { symbol: t.symbol, name: t.name, market: t.market, currency: t.currency,
-            qty: DEC_ZERO, cost: DEC_ZERO, fee: DEC_ZERO };
-      map.set(key, h);
-    }
-    h.qty = decAdd(h.qty, q);
-    h.cost = decAdd(h.cost, decMul(p, q));
-    h.fee = decAdd(h.fee, f);
-    if (t.name) h.name = t.name;
+/** 把 state.px 轉成引擎要的 priceMap，並把「整批快取」也視為 stale。 */
+function currentPriceMap() {
+  const m = {};
+  for (const [sym, px] of Object.entries(state.px)) {
+    m[sym] = { price: px.price, updatedAt: px.updatedAt, dataSource: px.dataSource,
+               stale: Boolean(px.stale) || state.pxFromCache };
   }
-  const holdings = [...map.values()].filter(h => h.qty > 0n);
-  for (const h of holdings) {
-    h.avgCost = decDiv(h.cost, h.qty);
-    const px = state.px[h.symbol];
-    if (px && px.price !== undefined && decParse(px.price) !== null) {
-      h.price = decParse(px.price);
-      h.priceUpdatedAt = px.updatedAt;
-      h.priceStale = Boolean(px.stale) || state.pxFromCache;
-      h.dataSource = px.dataSource || '';
-      h.marketValue = decMul(h.price, h.qty);
-      h.pl = decSub(h.marketValue, h.cost);
-      h.plPct = h.cost > 0n ? decMul(decDiv(h.pl, h.cost), DEC_HUNDRED) : null;
-    } else {
-      h.price = null; // 無報價：誠實顯示，不編造
-    }
-  }
-  holdings.sort((a, b) => a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0);
-  return { holdings, skipped };
+  return m;
 }
 
-/** 依幣別彙總。跨幣別禁止相加（尚無匯率換算），每個幣別一張卡。 */
-function summarizeByCurrency(holdings) {
-  const map = new Map();
-  for (const h of holdings) {
-    let s = map.get(h.currency);
-    if (!s) {
-      s = { currency: h.currency, invested: DEC_ZERO, pricedCost: DEC_ZERO, fees: DEC_ZERO,
-            marketValue: DEC_ZERO, missingPriceCount: 0, hasStale: false, count: 0 };
-      map.set(h.currency, s);
-    }
-    s.count += 1;
-    s.invested = decAdd(s.invested, h.cost);
-    s.fees = decAdd(s.fees, h.fee);
-    if (h.price !== null) {
-      s.marketValue = decAdd(s.marketValue, h.marketValue);
-      s.pricedCost = decAdd(s.pricedCost, h.cost);
-      if (h.priceStale) s.hasStale = true;
-    } else {
-      s.missingPriceCount += 1;
-    }
-  }
-  for (const s of map.values()) {
-    s.pl = decSub(s.marketValue, s.pricedCost);
-    s.plPct = s.pricedCost > 0n ? decMul(decDiv(s.pl, s.pricedCost), DEC_HUNDRED) : null;
-  }
-  // TWD 卡在前，其次 USD
-  return [...map.values()].sort((a, b) => (a.currency === 'TWD' ? 0 : 1) - (b.currency === 'TWD' ? 0 : 1));
-}
+function computePortfolio() { return computePositions(state.tx, currentPriceMap()); }
 
 // ---------- 畫面 ----------
 
-const VIEW_TITLES = { overview: '總覽', transactions: '交易紀錄', add: '新增買入', settings: '設定' };
+const VIEW_TITLES = { overview: '總覽', transactions: '交易紀錄', add: '新增交易', settings: '設定' };
 
 function switchView(name) {
   for (const m of document.querySelectorAll('main')) m.classList.remove('active');
@@ -698,12 +780,13 @@ function renderOverview() {
     return;
   }
   if (state.tx.length === 0) {
-    root.appendChild(el('div', { class: 'empty', text: '還沒有任何買入紀錄。點下方「新增」開始記錄第一筆。' }));
+    root.appendChild(el('div', { class: 'empty', text: '還沒有任何交易紀錄。點下方「新增」開始記錄第一筆。' }));
     return;
   }
 
-  const { holdings, skipped } = computeHoldings(state.tx);
-  const summaries = summarizeByCurrency(holdings);
+  const { positions, skipped } = computePortfolio();
+  const summaries = summarizeCurrencies(positions);
+  const holdings = positions.filter(p => p.qty > 0n); // 只列續抱的
 
   for (const s of summaries) {
     const prefix = CURRENCY_PREFIX[s.currency] || s.currency;
@@ -717,15 +800,18 @@ function renderOverview() {
     ]));
     row.appendChild(el('div', {}, [
       el('div', { class: 'sub-label', text: '未實現損益' }),
-      el('div', { class: 'sub-value', text: `${plSign(s.pl)}${decFormat(s.pl)}` })
+      el('div', { class: 'sub-value', text: `${plSign(s.unrealized)}${decFormat(s.unrealized)}` })
     ]));
     row.appendChild(el('div', {}, [
       el('div', { class: 'sub-label', text: '報酬率' }),
-      el('div', { class: 'sub-value', text: s.plPct === null ? '—' : `${plSign(s.plPct)}${decToFixed(s.plPct, 2)}%` })
+      el('div', { class: 'sub-value', text: s.unrealizedPct === null ? '—' : `${plSign(s.unrealizedPct)}${decToFixed(s.unrealizedPct, 2)}%` })
     ]));
     card.appendChild(row);
-    if (s.fees > 0n) {
-      card.appendChild(el('div', { class: 'warn', text: `已付手續費 ${prefix} ${decFormat(s.fees)}（未計入上方成本與報酬）` }));
+    if (s.hasSell || s.realized !== 0n) {
+      card.appendChild(el('div', { class: 'warn', text: `已實現損益 ${plSign(s.realized)}${decFormat(s.realized)}（賣出已入袋，含扣手續費與稅）` }));
+    }
+    if (s.feesAndTax > 0n) {
+      card.appendChild(el('div', { class: 'warn', text: `累積手續費/稅 ${prefix} ${decFormat(s.feesAndTax)}` }));
     }
     if (s.missingPriceCount > 0) {
       card.appendChild(el('div', { class: 'warn', text: `${s.missingPriceCount} 檔持倉目前無報價，總資產與損益未包含該部位。` }));
@@ -736,11 +822,14 @@ function renderOverview() {
     root.appendChild(card);
   }
 
-  // 每檔在「同幣別」內的配置佔比（不跨幣別相加）
   const investedByCurrency = {};
   for (const s of summaries) investedByCurrency[s.currency] = s.invested;
 
-  root.appendChild(el('div', { class: 'section-title', text: `我的持倉（${holdings.length}）` }));
+  if (holdings.length === 0) {
+    root.appendChild(el('div', { class: 'empty', text: '目前沒有續抱的持倉（已全部賣出）。已實現損益顯示於上方卡片。' }));
+  } else {
+    root.appendChild(el('div', { class: 'section-title', text: `我的持倉（${holdings.length}）` }));
+  }
 
   for (const h of holdings) {
     const prefix = CURRENCY_PREFIX[h.currency] || h.currency;
@@ -760,9 +849,9 @@ function renderOverview() {
     ]);
     top.appendChild(left);
     if (h.price !== null) {
-      top.appendChild(el('div', { class: `pl ${plClass(h.pl)}` }, [
-        `${plSign(h.pl)}${decFormat(h.pl)}`,
-        el('div', { class: 'pl-pct', text: h.plPct === null ? '' : `${plSign(h.plPct)}${decToFixed(h.plPct, 2)}%` })
+      top.appendChild(el('div', { class: `pl ${plClass(h.unrealized)}` }, [
+        `${plSign(h.unrealized)}${decFormat(h.unrealized)}`,
+        el('div', { class: 'pl-pct', text: h.unrealizedPct === null ? '' : `${plSign(h.unrealizedPct)}${decToFixed(h.unrealizedPct, 2)}%` })
       ]));
     }
     item.appendChild(top);
@@ -781,7 +870,8 @@ function renderOverview() {
 
     if (weight !== null) {
       const wl = el('div', { class: 'price-line' });
-      wl.appendChild(el('div', { text: `佔 ${h.currency} 部位 ${decToFixed(weight, 1)}%` }));
+      const realizedNote = h.realized !== 0n ? `｜已實現 ${plSign(h.realized)}${decFormat(h.realized)}` : '';
+      wl.appendChild(el('div', { text: `佔 ${h.currency} 部位 ${decToFixed(weight, 1)}%${realizedNote}` }));
       wl.appendChild(el('div', { class: 'chev', text: '查看明細 ›' }));
       item.appendChild(wl);
       const bar = el('div', { class: 'weight-bar' });
@@ -791,10 +881,9 @@ function renderOverview() {
     root.appendChild(item);
   }
 
-  // 集中度提醒（同幣別內單一持倉佔比過高）
-  const concentrationNotes = [];
+  // 集中度提醒（同幣別內單一續抱持倉佔比過高）
   for (const s of summaries) {
-    if (s.count < 2 || s.invested <= 0n) continue;
+    if (s.heldCount < 2 || s.invested <= 0n) continue;
     let topW = null, topSym = '';
     for (const h of holdings) {
       if (h.currency !== s.currency) continue;
@@ -802,13 +891,13 @@ function renderOverview() {
       if (topW === null || w > topW) { topW = w; topSym = h.symbol; }
     }
     if (topW !== null && topW >= decParse('60')) { // ≥ 60%（定點值，60×1e8）
-      concentrationNotes.push(`${s.currency} 部位中 ${topSym} 佔 ${decToFixed(topW, 1)}%，集中度偏高，長期投資可留意分散。`);
+      root.appendChild(el('div', { class: 'setup-banner', text: `⚠ ${s.currency} 部位中 ${topSym} 佔 ${decToFixed(topW, 1)}%，集中度偏高，長期投資可留意分散。` }));
     }
   }
-  for (const note of concentrationNotes) {
-    root.appendChild(el('div', { class: 'setup-banner', text: `⚠ ${note}` }));
-  }
 
+  if (positions.some(p => p.oversold)) {
+    root.appendChild(el('div', { class: 'hint', text: '⚠ 有賣出數量超過當時持股，已只計實際持有部分。請檢查交易紀錄。' }));
+  }
   if (skipped.length > 0) {
     root.appendChild(el('div', { class: 'hint', text: `⚠ ${skipped.length} 筆交易的數字欄位無法解析，已略過不計（請到 Google Sheet 檢查）。` }));
   }
@@ -824,21 +913,31 @@ function renderTransactions() {
   const sorted = [...state.tx].sort((a, b) => (b.tradeDate - a.tradeDate) || (b.createdAt - a.createdAt));
   for (const t of sorted) {
     const prefix = CURRENCY_PREFIX[t.currency] || t.currency;
+    const isSell = t.type === 'sell';
     const p = decParse(t.price);
     const q = decParse(t.quantity);
     const f = decParse(t.fee === '' ? '0' : t.fee) ?? DEC_ZERO;
-    const total = (p !== null && q !== null) ? decAdd(decMul(p, q), f) : null;
+    const tax = decParse(t.tax === '' || t.tax == null ? '0' : t.tax) ?? DEC_ZERO;
+    // 買入：現金流出＝價×量＋手續費；賣出：現金流入＝價×量−手續費−稅
+    const gross = (p !== null && q !== null) ? decMul(p, q) : null;
+    const total = gross === null ? null : (isSell ? decSub(decSub(gross, f), tax) : decAdd(gross, f));
 
     const row = el('div', { class: 'tx-row' });
     row.addEventListener('click', () => openTxEditor(t));
     const line1 = el('div', { class: 'line1' });
-    line1.appendChild(el('div', { class: 'sym' }, [t.symbol, el('span', { class: 'tx-badge', text: '買入' })]));
-    line1.appendChild(el('div', { class: 'amount', text: total === null ? '—' : `-${prefix} ${decFormat(total)}` }));
+    line1.appendChild(el('div', { class: 'sym' }, [
+      t.symbol,
+      el('span', { class: 'tx-badge', style: isSell ? 'background:#FEE2E2;color:#B91C1C' : '', text: isSell ? '賣出' : '買入' })
+    ]));
+    line1.appendChild(el('div', { class: `amount ${isSell ? 'up' : ''}`, text: total === null ? '—' : `${isSell ? '+' : '-'}${prefix} ${decFormat(total)}` }));
     row.appendChild(line1);
 
     const line2 = el('div', { class: 'line2' });
     line2.appendChild(el('div', { text: formatDateNum(t.tradeDate) }));
-    line2.appendChild(el('div', { text: `${decFormatQty(q ?? DEC_ZERO)} 股 @ ${p === null ? '?' : decFormat(p)}${f > 0n ? '｜手續費 ' + decFormat(f) : ''}` }));
+    const costs = [];
+    if (f > 0n) costs.push('手續費 ' + decFormat(f));
+    if (tax > 0n) costs.push('稅 ' + decFormat(tax));
+    line2.appendChild(el('div', { text: `${decFormatQty(q ?? DEC_ZERO)} 股 @ ${p === null ? '?' : decFormat(p)}${costs.length ? '｜' + costs.join('、') : ''}` }));
     row.appendChild(line2);
 
     if (t.note) row.appendChild(el('div', { class: 'note', text: `備註：${t.note}` }));
@@ -856,16 +955,50 @@ function numToDateInput(n) { // 20260713 → '2026-07-13'
   return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
 }
 
+let addType = 'buy'; // 'buy' | 'sell'
+
+function setAddType(type) {
+  addType = type === 'sell' ? 'sell' : 'buy';
+  const buyBtn = document.querySelector('#type-seg button[data-type="buy"]');
+  const sellBtn = document.querySelector('#type-seg button[data-type="sell"]');
+  buyBtn.className = addType === 'buy' ? 'on-buy' : '';
+  sellBtn.className = addType === 'sell' ? 'on-sell' : '';
+  $('btn-save').textContent = editingId ? '儲存修改' : (addType === 'sell' ? '儲存賣出紀錄' : '儲存買入紀錄');
+  $('f-tax-label').textContent = addType === 'sell' ? '稅（如證交稅）' : '稅（賣出用）';
+  updateAvailHint();
+}
+
+/** 計算某代號目前持有股數（可排除某筆，供編輯時檢查超賣）。 */
+function heldQty(symbol, currency, excludeId) {
+  const txs = excludeId ? state.tx.filter(t => t.id !== excludeId) : state.tx;
+  const { positions } = computePositions(txs, {});
+  const p = positions.find(x => x.symbol === symbol && x.currency === currency);
+  return p ? p.qty : DEC_ZERO;
+}
+
+function updateAvailHint() {
+  const hintEl = $('avail-hint');
+  if (addType !== 'sell') { hintEl.textContent = ''; return; }
+  const symbol = $('f-symbol').value.trim().toUpperCase();
+  const currency = $('f-currency').value;
+  if (!symbol) { hintEl.textContent = '賣出：請先輸入你持有的代號'; return; }
+  const held = heldQty(symbol, currency, editingId);
+  hintEl.textContent = held > 0n
+    ? `目前可賣：${decFormatQty(held)} 股（${symbol} · ${currency}）`
+    : `⚠ 你目前沒有持有 ${symbol}（${currency}）`;
+}
+
 function resetAddForm() {
   editingId = null;
   const form = $('add-form');
   form.reset();
   $('f-date').value = new Date().toISOString().slice(0, 10);
   $('f-fee').value = '0';
+  $('f-tax').value = '0';
   $('f-currency').value = $('f-market').value === 'TW' ? 'TWD' : 'USD';
-  $('btn-save').textContent = '儲存買入紀錄';
   $('btn-delete').style.display = 'none';
-  $('add-hint').textContent = '第一版僅支援「買入」。賣出、股息、匯率換算為後續版本。';
+  setAddType('buy');
+  $('add-hint').textContent = '買入或賣出皆可記錄。賣出會用加權平均成本自動算已實現損益。';
 }
 
 function openTxEditor(t) {
@@ -878,10 +1011,11 @@ function openTxEditor(t) {
   $('f-price').value = t.price;
   $('f-quantity').value = t.quantity;
   $('f-fee').value = (t.fee === '' || t.fee === undefined) ? '0' : t.fee;
+  $('f-tax').value = (t.tax === '' || t.tax == null) ? '0' : t.tax;
   $('f-currency').value = t.currency;
   $('f-note').value = t.note || '';
-  $('btn-save').textContent = '儲存修改';
   $('btn-delete').style.display = 'block';
+  setAddType(t.type === 'sell' ? 'sell' : 'buy');
   $('add-hint').textContent = '修改後會覆蓋原紀錄（原始建立時間保留）。';
   switchView('add');
   $('view-title').textContent = '編輯交易';
@@ -891,9 +1025,15 @@ function initAddForm() {
   const form = $('add-form');
   $('f-date').value = new Date().toISOString().slice(0, 10);
 
+  for (const b of document.querySelectorAll('#type-seg button')) {
+    b.addEventListener('click', () => setAddType(b.dataset.type));
+  }
   $('f-market').addEventListener('change', () => {
     $('f-currency').value = $('f-market').value === 'TW' ? 'TWD' : 'USD';
+    updateAvailHint();
   });
+  $('f-symbol').addEventListener('input', updateAvailHint);
+  $('f-currency').addEventListener('change', updateAvailHint);
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -904,19 +1044,28 @@ function initAddForm() {
     const price = $('f-price').value.trim();
     const quantity = $('f-quantity').value.trim();
     const fee = $('f-fee').value.trim() || '0';
+    const tax = $('f-tax').value.trim() || '0';
     const currency = $('f-currency').value;
     const note = $('f-note').value.trim();
+    const type = addType;
 
     if (!/^[A-Z0-9.]{1,16}$/.test(symbol)) return toast('代號格式不正確（英數字，例：VOO、0050）');
     if (tradeDate === null) return toast('請選擇交易日期');
-    const pU = decParse(price), qU = decParse(quantity), fU = decParse(fee);
+    const pU = decParse(price), qU = decParse(quantity), fU = decParse(fee), tU = decParse(tax);
     if (pU === null || pU <= 0n) return toast('價格必須是大於 0 的數字');
     if (qU === null || qU <= 0n) return toast('數量必須是大於 0 的數字');
     if (fU === null || fU < 0n) return toast('手續費必須是 0 或正數');
+    if (tU === null || tU < 0n) return toast('稅必須是 0 或正數');
+
+    if (type === 'sell') {
+      const avail = heldQty(symbol, currency, editingId);
+      if (avail <= 0n) return toast(`你目前沒有持有 ${symbol}（${currency}），無法賣出`);
+      if (qU > avail) return toast(`賣出數量超過持有（目前可賣 ${decFormatQty(avail)} 股）`);
+    }
 
     const isEdit = Boolean(editingId);
     const action = isEdit ? 'updateTransaction' : 'addTransaction';
-    const payload = { id: editingId || uuid(), tradeDate, symbol, name, market, price, quantity, fee, currency, note };
+    const payload = { id: editingId || uuid(), tradeDate, symbol, name, market, price, quantity, fee, currency, note, type, tax };
 
     const btn = $('btn-save');
     const original = btn.textContent;
@@ -971,11 +1120,12 @@ function statCell(k, v, cls) {
 }
 
 function openHoldingDetail(symbol, currency) {
-  const { holdings } = computeHoldings(state.tx);
-  const h = holdings.find(x => x.symbol === symbol && x.currency === currency);
+  const { positions } = computePortfolio();
+  const h = positions.find(x => x.symbol === symbol && x.currency === currency);
   if (!h) return;
+  const held = h.qty > 0n;
   const prefix = CURRENCY_PREFIX[currency] || currency;
-  const lots = state.tx
+  const txns = state.tx
     .filter(t => t.symbol === symbol && t.currency === currency)
     .sort((a, b) => (b.tradeDate - a.tradeDate) || (b.createdAt - a.createdAt));
 
@@ -985,8 +1135,9 @@ function openHoldingDetail(symbol, currency) {
   const head = el('div', { class: 'modal-head' });
   head.appendChild(el('div', { class: 'sym' }, [
     symbol,
-    h.price === null ? el('span', { class: 'badge-noprice', text: '無報價' }) :
-      (h.priceStale ? el('span', { class: 'badge-stale', text: '非即時' }) : null)
+    !held ? el('span', { class: 'badge-stale', text: '已結清' }) :
+      (h.price === null ? el('span', { class: 'badge-noprice', text: '無報價' }) :
+        (h.priceStale ? el('span', { class: 'badge-stale', text: '非即時' }) : null))
   ]));
   const closeBtn = el('button', { class: 'close', 'aria-label': '關閉', text: '✕' });
   closeBtn.addEventListener('click', closeModal);
@@ -995,37 +1146,49 @@ function openHoldingDetail(symbol, currency) {
 
   body.appendChild(el('div', { class: 'modal-sub', text:
     `${h.name || ''}${h.name ? '　' : ''}${MARKET_LABEL[h.market] || h.market}　${currency}` +
-    (h.price !== null ? `　現價 ${decFormat(h.price)}（更新 ${formatTime(h.priceUpdatedAt)}${h.dataSource ? '·' + h.dataSource : ''}）` : '')
+    (held && h.price !== null ? `　現價 ${decFormat(h.price)}（更新 ${formatTime(h.priceUpdatedAt)}${h.dataSource ? '·' + h.dataSource : ''}）` : '')
   }));
 
   const grid = el('div', { class: 'stat-grid' });
   grid.appendChild(statCell('持有股數', `${decFormatQty(h.qty)} 股`));
-  grid.appendChild(statCell('平均成本', `${prefix} ${decFormat(h.avgCost)}`));
-  grid.appendChild(statCell('總成本', `${prefix} ${decFormat(h.cost)}`));
-  grid.appendChild(statCell('已付手續費', `${prefix} ${decFormat(h.fee)}`));
-  if (h.price !== null) {
+  if (held) {
+    grid.appendChild(statCell('平均成本', `${prefix} ${decFormat(h.avgCost)}`));
+    grid.appendChild(statCell('剩餘成本', `${prefix} ${decFormat(h.cost)}`));
+  }
+  if (h.soldQty > 0n) {
+    grid.appendChild(statCell('已實現損益', `${plSign(h.realized)}${decFormat(h.realized)}`, plClass(h.realized)));
+    grid.appendChild(statCell('累計賣出', `${decFormatQty(h.soldQty)} 股`));
+  }
+  grid.appendChild(statCell('累積手續費/稅', `${prefix} ${decFormat(h.feesAndTax)}`));
+  if (held && h.price !== null) {
     grid.appendChild(statCell('目前市值', `${prefix} ${decFormat(h.marketValue)}`));
-    grid.appendChild(statCell('未實現損益', `${plSign(h.pl)}${decFormat(h.pl)}`, plClass(h.pl)));
-    grid.appendChild(statCell('報酬率', h.plPct === null ? '—' : `${plSign(h.plPct)}${decToFixed(h.plPct, 2)}%`, h.plPct === null ? '' : plClass(h.plPct)));
+    grid.appendChild(statCell('未實現損益', `${plSign(h.unrealized)}${decFormat(h.unrealized)}`, plClass(h.unrealized)));
+    grid.appendChild(statCell('未實現報酬率', h.unrealizedPct === null ? '—' : `${plSign(h.unrealizedPct)}${decToFixed(h.unrealizedPct, 2)}%`, h.unrealizedPct === null ? '' : plClass(h.unrealizedPct)));
   }
   body.appendChild(grid);
 
-  body.appendChild(el('div', { class: 'section-title', text: `買入紀錄（${lots.length}）· 點可編輯` }));
-  for (const t of lots) {
+  body.appendChild(el('div', { class: 'section-title', text: `交易紀錄（${txns.length}）· 點可編輯` }));
+  for (const t of txns) {
+    const isSell = t.type === 'sell';
     const p = decParse(t.price), q = decParse(t.quantity);
     const f = decParse(t.fee === '' ? '0' : t.fee) ?? DEC_ZERO;
-    const subtotal = (p !== null && q !== null) ? decAdd(decMul(p, q), f) : null;
+    const tax = decParse(t.tax === '' || t.tax == null ? '0' : t.tax) ?? DEC_ZERO;
+    const gross = (p !== null && q !== null) ? decMul(p, q) : null;
+    const subtotal = gross === null ? null : (isSell ? decSub(decSub(gross, f), tax) : decAdd(gross, f));
     const lot = el('div', { class: 'lot' });
     lot.addEventListener('click', () => openTxEditor(t));
     const l1 = el('div', { class: 'l1' });
-    l1.appendChild(el('div', { text: `${formatDateNum(t.tradeDate)}　${decFormatQty(q ?? DEC_ZERO)} 股 @ ${p === null ? '?' : decFormat(p)}` }));
-    l1.appendChild(el('div', { text: subtotal === null ? '' : `${prefix} ${decFormat(subtotal)}` }));
+    l1.appendChild(el('div', {}, [
+      el('span', { class: 'tx-badge', style: isSell ? 'background:#FEE2E2;color:#B91C1C' : '', text: isSell ? '賣' : '買' }),
+      ` ${formatDateNum(t.tradeDate)}　${decFormatQty(q ?? DEC_ZERO)} 股 @ ${p === null ? '?' : decFormat(p)}`
+    ]));
+    l1.appendChild(el('div', { class: isSell ? 'up' : '', text: subtotal === null ? '' : `${isSell ? '+' : '-'}${prefix} ${decFormat(subtotal)}` }));
     lot.appendChild(l1);
-    const l2parts = [];
-    if (f > 0n) l2parts.push(`手續費 ${decFormat(f)}`);
-    if (t.note) l2parts.push(`備註：${t.note}`);
-    if (l2parts.length) lot.appendChild(el('div', { class: 'l2' }, [el('div', { text: l2parts.join('　') }), el('div', { text: '編輯 ›' })]));
-    else lot.appendChild(el('div', { class: 'l2' }, [el('div', { text: '' }), el('div', { text: '編輯 ›' })]));
+    const parts = [];
+    if (f > 0n) parts.push(`手續費 ${decFormat(f)}`);
+    if (tax > 0n) parts.push(`稅 ${decFormat(tax)}`);
+    if (t.note) parts.push(`備註：${t.note}`);
+    lot.appendChild(el('div', { class: 'l2' }, [el('div', { text: parts.join('　') }), el('div', { text: '編輯 ›' })]));
     body.appendChild(lot);
   }
 

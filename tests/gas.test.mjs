@@ -70,6 +70,14 @@ eq(ctx.validateTxPayload_(Object.assign({}, goodPayload, { quantity: '-1' })).ok
 eq(ctx.validateTxPayload_(Object.assign({}, goodPayload, { fee: '' })).ok, true, '手續費空字串視為 0，通過');
 eq(ctx.validateTxPayload_(Object.assign({}, goodPayload, { currency: 'EUR' })).ok, false, '未知幣別被拒');
 eq(ctx.validateTxPayload_(Object.assign({}, goodPayload, { tradeDate: 20260231 })).ok, false, '2/31 無效日期被拒');
+eq(okRes.tx.type, 'buy', '未指定 type 預設 buy');
+eq(okRes.tx.tax, 0, '未指定 tax 預設 0');
+const sellRes = ctx.validateTxPayload_(Object.assign({}, goodPayload, { type: 'sell', tax: '3.5' }));
+eq(sellRes.ok, true, 'sell + tax 合法');
+eq(sellRes.tx.type, 'sell', 'type=sell 保留');
+eq(sellRes.tx.tax, 3.5, 'tax 轉 Number');
+eq(ctx.validateTxPayload_(Object.assign({}, goodPayload, { type: 'short' })).ok, false, '未知 type 被拒');
+eq(ctx.validateTxPayload_(Object.assign({}, goodPayload, { tax: '-1' })).ok, false, '負稅被拒');
 
 console.log(`gas-helpers: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

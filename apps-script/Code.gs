@@ -21,7 +21,8 @@ var TX_SHEET = 'Transactions';
 var PRICE_SHEET = 'Prices';
 var SETTINGS_SHEET = 'Settings';
 
-var TX_HEADERS = ['id', 'tradeDate', 'symbol', 'name', 'market', 'price', 'quantity', 'fee', 'currency', 'note', 'createdAt', 'updatedAt'];
+// type/tax 接在最後（M/N 欄），不動既有 A–L 欄位；舊資料 type 空 → 視為 buy、tax 空 → 0。
+var TX_HEADERS = ['id', 'tradeDate', 'symbol', 'name', 'market', 'price', 'quantity', 'fee', 'currency', 'note', 'createdAt', 'updatedAt', 'type', 'tax'];
 var PRICE_HEADERS = ['symbol', 'price', 'currency', 'updatedAt', 'dataSource'];
 var SETTINGS_HEADERS = ['key', 'value'];
 
@@ -77,6 +78,7 @@ function setup() {
   tx.getRange('C:C').setNumberFormat('@');
   tx.getRange('D:D').setNumberFormat('@');
   tx.getRange('J:J').setNumberFormat('@');
+  tx.getRange('M:M').setNumberFormat('@'); // type (buy/sell)
   px.getRange('A:A').setNumberFormat('@'); // Prices.symbol
 }
 
@@ -135,7 +137,9 @@ function listTransactions_() {
       currency: String(r[8]),
       note: String(r[9]),
       createdAt: Number(r[10]),
-      updatedAt: Number(r[11])
+      updatedAt: Number(r[11]),
+      type: String(r[12] || '').toLowerCase() === 'sell' ? 'sell' : 'buy', // 舊資料空 → buy
+      tax: String(r[13] === '' || r[13] == null ? '0' : r[13])
     });
   }
   return out;
@@ -166,15 +170,21 @@ function validateTxPayload_(p) {
   if (quantity === null) return { ok: false, error: 'invalid quantity' };
   var fee = parseDecimalString_(p.fee === undefined || p.fee === '' ? '0' : p.fee, true, 10000000);
   if (fee === null) return { ok: false, error: 'invalid fee' };
+  var tax = parseDecimalString_(p.tax === undefined || p.tax === '' ? '0' : p.tax, true, 10000000);
+  if (tax === null) return { ok: false, error: 'invalid tax' };
 
   var currency = String(p.currency || '').trim().toUpperCase();
   if (currency !== 'USD' && currency !== 'TWD') return { ok: false, error: 'invalid currency' };
+
+  var type = String(p.type || 'buy').trim().toLowerCase();
+  if (type !== 'buy' && type !== 'sell') return { ok: false, error: 'invalid type' };
 
   var note = String(p.note || '').slice(0, 200);
 
   return { ok: true, tx: {
     id: id, tradeDate: tradeDate, symbol: symbol, name: name, market: market,
-    price: Number(price), quantity: Number(quantity), fee: Number(fee), currency: currency, note: note
+    price: Number(price), quantity: Number(quantity), fee: Number(fee), currency: currency,
+    note: note, type: type, tax: Number(tax)
   } };
 }
 
@@ -189,11 +199,12 @@ function findTxRow_(sheet, id) {
   return -1;
 }
 
-/** 把一列的文字欄位（symbol/name/note）強制設為純文字，避免 '0050' 被轉成數字 50。 */
+/** 把一列的文字欄位（symbol/name/note/type）強制設為純文字，避免 '0050' 被轉成數字 50。 */
 function forceTextCols_(sheet, row) {
   sheet.getRange(row, 3).setNumberFormat('@'); // symbol (C)
   sheet.getRange(row, 4).setNumberFormat('@'); // name (D)
   sheet.getRange(row, 10).setNumberFormat('@'); // note (J)
+  sheet.getRange(row, 13).setNumberFormat('@'); // type (M)
 }
 
 function addTransaction_(p) {
@@ -210,7 +221,7 @@ function addTransaction_(p) {
   // tradeDate 存純數字（20260712），createdAt/updatedAt 存 epoch 毫秒數字，
   // 全程不寫入日期字串，避免 Google Sheets 自動轉成日期物件
   sheet.getRange(targetRow, 1, 1, TX_HEADERS.length).setValues([[
-    t.id, t.tradeDate, t.symbol, t.name, t.market, t.price, t.quantity, t.fee, t.currency, t.note, now, now
+    t.id, t.tradeDate, t.symbol, t.name, t.market, t.price, t.quantity, t.fee, t.currency, t.note, now, now, t.type, t.tax
   ]]);
   return { ok: true, id: t.id };
 }
@@ -229,7 +240,7 @@ function updateTransaction_(p) {
   var now = Date.now();
   forceTextCols_(sheet, row);
   sheet.getRange(row, 1, 1, TX_HEADERS.length).setValues([[
-    t.id, t.tradeDate, t.symbol, t.name, t.market, t.price, t.quantity, t.fee, t.currency, t.note, createdAt, now
+    t.id, t.tradeDate, t.symbol, t.name, t.market, t.price, t.quantity, t.fee, t.currency, t.note, createdAt, now, t.type, t.tax
   ]]);
   return { ok: true, id: t.id };
 }

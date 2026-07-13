@@ -13,7 +13,7 @@ if (!m) { console.error('FAIL: index.html 找不到 money-math script 區塊'); 
 
 const moduleObj = { exports: {} };
 vm.runInNewContext(m[1], { module: moduleObj, console });
-const { decParse, decAdd, decSub, decMul, decDiv, decToFixed, decFormat, decFormatQty, DEC_HUNDRED, DEC_ZERO } = moduleObj.exports;
+const { decParse, decAdd, decSub, decMul, decDiv, decToFixed, decFormat, decFormatQty, DEC_HUNDRED, DEC_ZERO, computePositions, summarizeCurrencies } = moduleObj.exports;
 
 let passed = 0, failed = 0;
 function eq(actual, expected, label) {
@@ -78,6 +78,110 @@ eq(decToFixed(decAdd(decMul(decParse('105'), decParse('2')), decParse('200')), 2
 
 // --- 極大值 ---
 eq(decFormat(decParse('999999999999.99'), 2), '999,999,999,999.99', '極大金額不失真');
+
+// ==================== 投資組合引擎（買入/賣出/已實現） ====================
+let seq = 0;
+function tx(o) {
+  return Object.assign({
+    id: `id-${++seq}`, symbol: 'VOO', currency: 'USD', market: 'US', name: 'VOO',
+    type: 'buy', tradeDate: 20260101, createdAt: seq, price: '100', quantity: '1', fee: '0', tax: '0'
+  }, o);
+}
+function pos1(txs, priceMap) { return computePositions(txs, priceMap).positions[0]; }
+
+// A. 單次買入 + 未實現
+{
+  const p = pos1([tx({ quantity: '10', price: '100', fee: '5' })], { VOO: { price: '120', updatedAt: 1, stale: false } });
+  eq(decToFixed(p.qty, 0), '10', 'A 持有 10 股');
+  eq(decToFixed(p.avgCost, 2), '100.00', 'A 均價 100');
+  eq(decToFixed(p.cost, 2), '1000.00', 'A 成本 1000（不含手續費）');
+  eq(decToFixed(p.buyFees, 2), '5.00', 'A 買入手續費 5');
+  eq(decToFixed(p.marketValue, 2), '1200.00', 'A 市值 1200');
+  eq(decToFixed(p.unrealized, 2), '200.00', 'A 未實現 +200');
+  eq(decToFixed(p.unrealizedPct, 2), '20.00', 'A 未實現報酬率 20%');
+  eq(decToFixed(p.realized, 2), '0.00', 'A 無賣出，已實現 0');
+}
+
+// B. 多次買入加權平均
+{
+  const p = pos1([tx({ quantity: '10', price: '100' }), tx({ quantity: '10', price: '200', tradeDate: 20260102 })], {});
+  eq(decToFixed(p.avgCost, 2), '150.00', 'B 加權平均 150');
+  eq(decToFixed(p.qty, 0), '20', 'B 共 20 股');
+}
+
+// C. 部分賣出：已實現 = 收入 − 對應成本 − 賣出手續費 − 賣出稅
+{
+  const p = pos1([
+    tx({ quantity: '10', price: '100' }),
+    tx({ type: 'sell', quantity: '4', price: '150', fee: '10', tax: '5', tradeDate: 20260102 })
+  ], { VOO: { price: '150', updatedAt: 1 } });
+  eq(decToFixed(p.realized, 2), '185.00', 'C 已實現 600-400-10-5=185');
+  eq(decToFixed(p.qty, 0), '6', 'C 剩 6 股');
+  eq(decToFixed(p.cost, 2), '600.00', 'C 剩餘成本 600');
+  eq(decToFixed(p.avgCost, 2), '100.00', 'C 剩餘均價仍 100');
+  eq(decToFixed(p.sellTax, 2), '5.00', 'C 賣出稅 5');
+  eq(p.oversold, false, 'C 未超賣');
+}
+
+// D. 全部賣出：qty=0，已實現保留
+{
+  const { positions } = computePositions([
+    tx({ quantity: '10', price: '100' }),
+    tx({ type: 'sell', quantity: '10', price: '150', tradeDate: 20260102 })
+  ], { VOO: { price: '150', updatedAt: 1 } });
+  const p = positions[0];
+  eq(decToFixed(p.realized, 2), '500.00', 'D 全賣已實現 +500');
+  eq(decToFixed(p.qty, 0), '0', 'D 持有歸零');
+  eq(p.price, null, 'D 已結清不顯示市值');
+}
+
+// E. 超賣防呆：clamp 到持有量並標記
+{
+  const p = pos1([
+    tx({ quantity: '5', price: '100' }),
+    tx({ type: 'sell', quantity: '10', price: '150', tradeDate: 20260102 })
+  ], {});
+  eq(p.oversold, true, 'E 標記超賣');
+  eq(decToFixed(p.realized, 2), '250.00', 'E 只賣掉持有的 5 股：750-500=250');
+  eq(decToFixed(p.qty, 0), '0', 'E 賣光');
+}
+
+// F. 買→部分賣→再買：均價以剩餘重算
+{
+  const p = pos1([
+    tx({ quantity: '10', price: '100' }),
+    tx({ type: 'sell', quantity: '5', price: '150', tradeDate: 20260102 }),
+    tx({ quantity: '5', price: '200', tradeDate: 20260103 })
+  ], {});
+  eq(decToFixed(p.realized, 2), '250.00', 'F 賣出已實現 250');
+  eq(decToFixed(p.qty, 0), '10', 'F 最終 10 股');
+  eq(decToFixed(p.avgCost, 2), '150.00', 'F 最終均價 (500+1000)/10=150');
+}
+
+// G. 幣別彙總：一檔續抱、一檔已結清，已實現皆計入
+{
+  const txs = [
+    tx({ symbol: 'VOO', quantity: '10', price: '100' }),
+    tx({ symbol: 'QQQ', quantity: '10', price: '100', name: 'QQQ' }),
+    tx({ symbol: 'QQQ', type: 'sell', quantity: '10', price: '130', tradeDate: 20260102, name: 'QQQ' })
+  ];
+  const { positions } = computePositions(txs, { VOO: { price: '120', updatedAt: 1 } });
+  const s = summarizeCurrencies(positions).find(x => x.currency === 'USD');
+  eq(decToFixed(s.realized, 2), '300.00', 'G 已結清 QQQ 已實現 +300 計入幣別');
+  eq(decToFixed(s.invested, 2), '1000.00', 'G 投入本金只算續抱的 VOO 1000');
+  eq(decToFixed(s.unrealized, 2), '200.00', 'G 未實現只算 VOO +200');
+  eq(s.heldCount, 1, 'G 續抱檔數 1');
+  eq(s.hasSell, true, 'G 有賣出紀錄');
+}
+
+// H. 精度：長小數賣出不產生浮點尾差
+{
+  const p = pos1([
+    tx({ quantity: '3', price: '123.456789012345' }),
+    tx({ type: 'sell', quantity: '1', price: '123.456789012345', tradeDate: 20260102 })
+  ], {});
+  eq(decToFixed(p.realized, 8), '0.00000000', 'H 同價買賣已實現剛好 0，無尾差');
+}
 
 console.log(`money-math: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
