@@ -65,9 +65,15 @@ function doPost(e) {
 
 function setup() {
   var ss = SpreadsheetApp.getActive();
-  ensureSheet_(ss, TX_SHEET, TX_HEADERS);
-  ensureSheet_(ss, PRICE_SHEET, PRICE_HEADERS);
+  var tx = ensureSheet_(ss, TX_SHEET, TX_HEADERS);
+  var px = ensureSheet_(ss, PRICE_SHEET, PRICE_HEADERS);
   ensureSheet_(ss, SETTINGS_SHEET, SETTINGS_HEADERS);
+  // 把可能是「全數字」的文字欄位整欄設為純文字，避免 Sheets 把 '0050' 轉成數字 50（吃掉前導零）。
+  // 這是與日期陷阱同一家族的雷；symbol=C、name=D、note=J。
+  tx.getRange('C:C').setNumberFormat('@');
+  tx.getRange('D:D').setNumberFormat('@');
+  tx.getRange('J:J').setNumberFormat('@');
+  px.getRange('A:A').setNumberFormat('@'); // Prices.symbol
 }
 
 function ensureSheet_(ss, name, headers) {
@@ -171,9 +177,17 @@ function addTransaction_(p) {
   }
 
   var now = Date.now();
+  // 先把目標列的文字欄位（symbol/name/note）設成純文字，再寫值——這樣即使沒重跑 setup、
+  // 整欄格式未套用，這一列仍能保住 '0050' 的前導零，不被 Sheets 轉成數字 50。
+  var targetRow = sheet.getLastRow() + 1;
+  sheet.getRange(targetRow, 3).setNumberFormat('@'); // symbol (C)
+  sheet.getRange(targetRow, 4).setNumberFormat('@'); // name (D)
+  sheet.getRange(targetRow, 10).setNumberFormat('@'); // note (J)
   // tradeDate 存純數字（20260712），createdAt/updatedAt 存 epoch 毫秒數字，
   // 全程不寫入日期字串，避免 Google Sheets 自動轉成日期物件
-  sheet.appendRow([id, tradeDate, symbol, name, market, Number(price), Number(quantity), Number(fee), currency, note, now, now]);
+  sheet.getRange(targetRow, 1, 1, TX_HEADERS.length).setValues([[
+    id, tradeDate, symbol, name, market, Number(price), Number(quantity), Number(fee), currency, note, now, now
+  ]]);
   return { ok: true, id: id };
 }
 
@@ -333,12 +347,15 @@ function savePriceCache_(symbol, quote) {
     var syms = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
     for (var i = 0; i < syms.length; i++) {
       if (String(syms[i][0]) === symbol) {
+        sheet.getRange(i + 2, 1).setNumberFormat('@'); // symbol 保純文字
         sheet.getRange(i + 2, 1, 1, PRICE_HEADERS.length).setValues([row]);
         return;
       }
     }
   }
-  sheet.appendRow(row);
+  var targetRow = sheet.getLastRow() + 1;
+  sheet.getRange(targetRow, 1).setNumberFormat('@'); // symbol 欄保純文字，避免 '0050' → 50
+  sheet.getRange(targetRow, 1, 1, PRICE_HEADERS.length).setValues([row]);
 }
 
 function readPriceCache_(symbol) {
