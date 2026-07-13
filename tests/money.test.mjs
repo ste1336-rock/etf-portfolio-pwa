@@ -62,6 +62,20 @@ eq(decParse('1.2.3'), null, '雙小數點 → null');
 eq(decParse(undefined), null, 'undefined → null');
 eq(decDiv(decParse('1'), DEC_ZERO), null, '除以零 → null');
 
+// --- 配置佔比（同幣別內權重 = 成本/幣別總成本 × 100）---
+const wInvested = decParse('510'); // VOO 300 + 其他 210
+const wCost = decParse('300');
+const weight = decMul(decDiv(wCost, wInvested), DEC_HUNDRED);
+eq(decToFixed(weight, 2), '58.82', '權重 300/510 = 58.82%');
+eq(decToFixed(decMul(decDiv(decParse('510'), decParse('510')), DEC_HUNDRED), 2), '100.00', '單一持倉權重 100%');
+// 集中度門檻 60%（定點 60×1e8）
+eq(weight >= decParse('60'), false, '58.82% 未達 60% 門檻');
+eq(decMul(decDiv(decParse('400'), decParse('510')), DEC_HUNDRED) >= decParse('60'), true, '78.4% 達 60% 門檻');
+
+// --- 手續費小計（價×量 + 手續費，交易列表用）---
+eq(decToFixed(decAdd(decMul(decParse('100'), decParse('3')), decParse('10')), 2), '310.00', 'VOO 3股@100+手續費10 = 310');
+eq(decToFixed(decAdd(decMul(decParse('105'), decParse('2')), decParse('200')), 2), '410.00', '0050 2股@105+手續費200 = 410');
+
 // --- 極大值 ---
 eq(decFormat(decParse('999999999999.99'), 2), '999,999,999,999.99', '極大金額不失真');
 

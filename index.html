@@ -138,6 +138,43 @@
   /* 點擊一律落在 button 本體，避免事件目標落在 SVG 子節點的邊角案例 */
   nav button svg, nav button *, #btn-refresh svg { pointer-events: none; }
 
+  .holding { cursor: pointer; }
+  .holding .chev { color: #C7CDD6; font-size: .9rem; margin-left: 4px; }
+  .weight-bar { height: 5px; background: #E5E7EB; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+  .weight-bar > span { display: block; height: 100%; background: var(--green); border-radius: 3px; }
+  .tx-row { cursor: pointer; }
+  .btn-danger {
+    width: 100%; padding: 12px; font-size: .95rem; font-weight: 700;
+    background: #fff; color: var(--red); border: 1px solid #FECACA;
+    border-radius: 14px; cursor: pointer; margin-top: 10px;
+  }
+
+  /* 明細 modal */
+  #modal-overlay {
+    position: fixed; inset: 0; z-index: 40; background: rgba(17,24,39,.45);
+    display: none; align-items: flex-end; justify-content: center;
+  }
+  #modal-overlay.show { display: flex; }
+  #modal {
+    background: var(--bg); width: 100%; max-width: 560px;
+    border-radius: 20px 20px 0 0; max-height: 88vh; overflow-y: auto;
+    padding: 8px 16px calc(24px + env(safe-area-inset-bottom));
+    animation: slideup .22s ease;
+  }
+  @keyframes slideup { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  .modal-grabber { width: 40px; height: 4px; background: #D1D5DB; border-radius: 2px; margin: 8px auto 12px; }
+  .modal-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
+  .modal-head .sym { font-size: 1.3rem; font-weight: 800; }
+  .modal-head .close { border: none; background: none; font-size: 1.5rem; color: var(--gray); cursor: pointer; line-height: 1; }
+  .modal-sub { font-size: .78rem; color: var(--gray); margin-bottom: 12px; }
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); border-radius: 14px; overflow: hidden; margin-bottom: 12px; }
+  .stat-grid > div { background: var(--card); padding: 12px 14px; }
+  .stat-grid .k { font-size: .72rem; color: var(--gray); }
+  .stat-grid .v { font-size: 1.02rem; font-weight: 700; margin-top: 2px; }
+  .lot { background: var(--card); border-radius: 12px; padding: 10px 14px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+  .lot .l1 { display: flex; justify-content: space-between; font-size: .82rem; }
+  .lot .l2 { display: flex; justify-content: space-between; font-size: .74rem; color: var(--gray); margin-top: 3px; }
+
   #toast {
     position: fixed; left: 50%; bottom: calc(90px + env(safe-area-inset-bottom));
     transform: translateX(-50%); background: rgba(17,24,39,.92); color: #fff;
@@ -213,7 +250,8 @@
       <input id="f-note" autocomplete="off" maxlength="200">
     </div>
     <button class="btn-primary" id="btn-save" type="submit">儲存買入紀錄</button>
-    <p class="hint">第一版僅支援「買入」。賣出、股息、匯率換算為後續版本。</p>
+    <button class="btn-danger" id="btn-delete" type="button" style="display:none">刪除這筆交易</button>
+    <p class="hint" id="add-hint">第一版僅支援「買入」。賣出、股息、匯率換算為後續版本。</p>
   </form>
 </main>
 
@@ -260,6 +298,13 @@
     設定
   </button>
 </nav>
+
+<div id="modal-overlay">
+  <div id="modal">
+    <div class="modal-grabber"></div>
+    <div id="modal-body"></div>
+  </div>
+</div>
 
 <div id="toast"></div>
 
@@ -352,7 +397,7 @@ if (typeof module !== 'undefined' && module.exports) {
 <script>
 'use strict';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 
 const LS = {
   api: 'etf.apiUrl',
@@ -598,12 +643,13 @@ function summarizeByCurrency(holdings) {
   for (const h of holdings) {
     let s = map.get(h.currency);
     if (!s) {
-      s = { currency: h.currency, invested: DEC_ZERO, pricedCost: DEC_ZERO,
+      s = { currency: h.currency, invested: DEC_ZERO, pricedCost: DEC_ZERO, fees: DEC_ZERO,
             marketValue: DEC_ZERO, missingPriceCount: 0, hasStale: false, count: 0 };
       map.set(h.currency, s);
     }
     s.count += 1;
     s.invested = decAdd(s.invested, h.cost);
+    s.fees = decAdd(s.fees, h.fee);
     if (h.price !== null) {
       s.marketValue = decAdd(s.marketValue, h.marketValue);
       s.pricedCost = decAdd(s.pricedCost, h.cost);
@@ -678,6 +724,9 @@ function renderOverview() {
       el('div', { class: 'sub-value', text: s.plPct === null ? '—' : `${plSign(s.plPct)}${decToFixed(s.plPct, 2)}%` })
     ]));
     card.appendChild(row);
+    if (s.fees > 0n) {
+      card.appendChild(el('div', { class: 'warn', text: `已付手續費 ${prefix} ${decFormat(s.fees)}（未計入上方成本與報酬）` }));
+    }
     if (s.missingPriceCount > 0) {
       card.appendChild(el('div', { class: 'warn', text: `${s.missingPriceCount} 檔持倉目前無報價，總資產與損益未包含該部位。` }));
     }
@@ -687,11 +736,18 @@ function renderOverview() {
     root.appendChild(card);
   }
 
+  // 每檔在「同幣別」內的配置佔比（不跨幣別相加）
+  const investedByCurrency = {};
+  for (const s of summaries) investedByCurrency[s.currency] = s.invested;
+
   root.appendChild(el('div', { class: 'section-title', text: `我的持倉（${holdings.length}）` }));
 
   for (const h of holdings) {
     const prefix = CURRENCY_PREFIX[h.currency] || h.currency;
+    const ccyInvested = investedByCurrency[h.currency] || DEC_ZERO;
+    const weight = ccyInvested > 0n ? decMul(decDiv(h.cost, ccyInvested), DEC_HUNDRED) : null;
     const item = el('div', { class: 'holding' });
+    item.addEventListener('click', () => openHoldingDetail(h.symbol, h.currency));
 
     const top = el('div', { class: 'top' });
     const left = el('div', {}, [
@@ -722,7 +778,35 @@ function renderOverview() {
       pl.appendChild(el('div', { text: `更新 ${formatTime(h.priceUpdatedAt)}${h.dataSource ? '（' + h.dataSource + '）' : ''}` }));
       item.appendChild(pl);
     }
+
+    if (weight !== null) {
+      const wl = el('div', { class: 'price-line' });
+      wl.appendChild(el('div', { text: `佔 ${h.currency} 部位 ${decToFixed(weight, 1)}%` }));
+      wl.appendChild(el('div', { class: 'chev', text: '查看明細 ›' }));
+      item.appendChild(wl);
+      const bar = el('div', { class: 'weight-bar' });
+      bar.appendChild(el('span', { style: `width:${Math.min(100, Number(decToFixed(weight, 1)))}%` }));
+      item.appendChild(bar);
+    }
     root.appendChild(item);
+  }
+
+  // 集中度提醒（同幣別內單一持倉佔比過高）
+  const concentrationNotes = [];
+  for (const s of summaries) {
+    if (s.count < 2 || s.invested <= 0n) continue;
+    let topW = null, topSym = '';
+    for (const h of holdings) {
+      if (h.currency !== s.currency) continue;
+      const w = decMul(decDiv(h.cost, s.invested), DEC_HUNDRED);
+      if (topW === null || w > topW) { topW = w; topSym = h.symbol; }
+    }
+    if (topW !== null && topW >= decParse('60')) { // ≥ 60%（定點值，60×1e8）
+      concentrationNotes.push(`${s.currency} 部位中 ${topSym} 佔 ${decToFixed(topW, 1)}%，集中度偏高，長期投資可留意分散。`);
+    }
+  }
+  for (const note of concentrationNotes) {
+    root.appendChild(el('div', { class: 'setup-banner', text: `⚠ ${note}` }));
   }
 
   if (skipped.length > 0) {
@@ -746,6 +830,7 @@ function renderTransactions() {
     const total = (p !== null && q !== null) ? decAdd(decMul(p, q), f) : null;
 
     const row = el('div', { class: 'tx-row' });
+    row.addEventListener('click', () => openTxEditor(t));
     const line1 = el('div', { class: 'line1' });
     line1.appendChild(el('div', { class: 'sym' }, [t.symbol, el('span', { class: 'tx-badge', text: '買入' })]));
     line1.appendChild(el('div', { class: 'amount', text: total === null ? '—' : `-${prefix} ${decFormat(total)}` }));
@@ -762,6 +847,45 @@ function renderTransactions() {
 }
 
 // ---------- 新增交易 ----------
+
+let editingId = null; // null = 新增模式；有值 = 編輯該筆交易
+
+function numToDateInput(n) { // 20260713 → '2026-07-13'
+  const s = String(n);
+  if (!/^\d{8}$/.test(s)) return new Date().toISOString().slice(0, 10);
+  return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
+}
+
+function resetAddForm() {
+  editingId = null;
+  const form = $('add-form');
+  form.reset();
+  $('f-date').value = new Date().toISOString().slice(0, 10);
+  $('f-fee').value = '0';
+  $('f-currency').value = $('f-market').value === 'TW' ? 'TWD' : 'USD';
+  $('btn-save').textContent = '儲存買入紀錄';
+  $('btn-delete').style.display = 'none';
+  $('add-hint').textContent = '第一版僅支援「買入」。賣出、股息、匯率換算為後續版本。';
+}
+
+function openTxEditor(t) {
+  closeModal();
+  editingId = t.id;
+  $('f-symbol').value = t.symbol;
+  $('f-market').value = t.market;
+  $('f-name').value = t.name || '';
+  $('f-date').value = numToDateInput(t.tradeDate);
+  $('f-price').value = t.price;
+  $('f-quantity').value = t.quantity;
+  $('f-fee').value = (t.fee === '' || t.fee === undefined) ? '0' : t.fee;
+  $('f-currency').value = t.currency;
+  $('f-note').value = t.note || '';
+  $('btn-save').textContent = '儲存修改';
+  $('btn-delete').style.display = 'block';
+  $('add-hint').textContent = '修改後會覆蓋原紀錄（原始建立時間保留）。';
+  switchView('add');
+  $('view-title').textContent = '編輯交易';
+}
 
 function initAddForm() {
   const form = $('add-form');
@@ -790,27 +914,122 @@ function initAddForm() {
     if (qU === null || qU <= 0n) return toast('數量必須是大於 0 的數字');
     if (fU === null || fU < 0n) return toast('手續費必須是 0 或正數');
 
-    const payload = { id: uuid(), tradeDate, symbol, name, market, price, quantity, fee, currency, note };
+    const isEdit = Boolean(editingId);
+    const action = isEdit ? 'updateTransaction' : 'addTransaction';
+    const payload = { id: editingId || uuid(), tradeDate, symbol, name, market, price, quantity, fee, currency, note };
 
     const btn = $('btn-save');
+    const original = btn.textContent;
     btn.disabled = true;
     btn.textContent = '儲存中…';
     try {
-      await api('addTransaction', payload);
-      toast('已儲存');
-      form.reset();
-      $('f-date').value = new Date().toISOString().slice(0, 10);
-      $('f-fee').value = '0';
-      $('f-currency').value = market === 'TW' ? 'TWD' : 'USD';
+      await api(action, payload);
+      toast(isEdit ? '已更新' : '已儲存');
+      resetAddForm();
       switchView('overview');
       await refreshData(false);
     } catch (err) {
       toast(`儲存失敗：${err.message}`);
+      btn.textContent = original;
     } finally {
       btn.disabled = false;
-      btn.textContent = '儲存買入紀錄';
     }
   });
+
+  $('btn-delete').addEventListener('click', async () => {
+    if (!editingId) return;
+    if (!confirm('確定刪除這筆交易？此動作無法復原。')) return;
+    const btn = $('btn-delete');
+    btn.disabled = true;
+    btn.textContent = '刪除中…';
+    try {
+      await api('deleteTransaction', { id: editingId });
+      toast('已刪除');
+      resetAddForm();
+      switchView('overview');
+      await refreshData(false);
+    } catch (err) {
+      toast(`刪除失敗：${err.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '刪除這筆交易';
+    }
+  });
+}
+
+// ---------- 持倉明細 modal ----------
+
+function closeModal() {
+  $('modal-overlay').classList.remove('show');
+}
+
+function statCell(k, v, cls) {
+  return el('div', {}, [
+    el('div', { class: 'k', text: k }),
+    el('div', { class: `v ${cls || ''}`, text: v })
+  ]);
+}
+
+function openHoldingDetail(symbol, currency) {
+  const { holdings } = computeHoldings(state.tx);
+  const h = holdings.find(x => x.symbol === symbol && x.currency === currency);
+  if (!h) return;
+  const prefix = CURRENCY_PREFIX[currency] || currency;
+  const lots = state.tx
+    .filter(t => t.symbol === symbol && t.currency === currency)
+    .sort((a, b) => (b.tradeDate - a.tradeDate) || (b.createdAt - a.createdAt));
+
+  const body = $('modal-body');
+  body.replaceChildren();
+
+  const head = el('div', { class: 'modal-head' });
+  head.appendChild(el('div', { class: 'sym' }, [
+    symbol,
+    h.price === null ? el('span', { class: 'badge-noprice', text: '無報價' }) :
+      (h.priceStale ? el('span', { class: 'badge-stale', text: '非即時' }) : null)
+  ]));
+  const closeBtn = el('button', { class: 'close', 'aria-label': '關閉', text: '✕' });
+  closeBtn.addEventListener('click', closeModal);
+  head.appendChild(closeBtn);
+  body.appendChild(head);
+
+  body.appendChild(el('div', { class: 'modal-sub', text:
+    `${h.name || ''}${h.name ? '　' : ''}${MARKET_LABEL[h.market] || h.market}　${currency}` +
+    (h.price !== null ? `　現價 ${decFormat(h.price)}（更新 ${formatTime(h.priceUpdatedAt)}${h.dataSource ? '·' + h.dataSource : ''}）` : '')
+  }));
+
+  const grid = el('div', { class: 'stat-grid' });
+  grid.appendChild(statCell('持有股數', `${decFormatQty(h.qty)} 股`));
+  grid.appendChild(statCell('平均成本', `${prefix} ${decFormat(h.avgCost)}`));
+  grid.appendChild(statCell('總成本', `${prefix} ${decFormat(h.cost)}`));
+  grid.appendChild(statCell('已付手續費', `${prefix} ${decFormat(h.fee)}`));
+  if (h.price !== null) {
+    grid.appendChild(statCell('目前市值', `${prefix} ${decFormat(h.marketValue)}`));
+    grid.appendChild(statCell('未實現損益', `${plSign(h.pl)}${decFormat(h.pl)}`, plClass(h.pl)));
+    grid.appendChild(statCell('報酬率', h.plPct === null ? '—' : `${plSign(h.plPct)}${decToFixed(h.plPct, 2)}%`, h.plPct === null ? '' : plClass(h.plPct)));
+  }
+  body.appendChild(grid);
+
+  body.appendChild(el('div', { class: 'section-title', text: `買入紀錄（${lots.length}）· 點可編輯` }));
+  for (const t of lots) {
+    const p = decParse(t.price), q = decParse(t.quantity);
+    const f = decParse(t.fee === '' ? '0' : t.fee) ?? DEC_ZERO;
+    const subtotal = (p !== null && q !== null) ? decAdd(decMul(p, q), f) : null;
+    const lot = el('div', { class: 'lot' });
+    lot.addEventListener('click', () => openTxEditor(t));
+    const l1 = el('div', { class: 'l1' });
+    l1.appendChild(el('div', { text: `${formatDateNum(t.tradeDate)}　${decFormatQty(q ?? DEC_ZERO)} 股 @ ${p === null ? '?' : decFormat(p)}` }));
+    l1.appendChild(el('div', { text: subtotal === null ? '' : `${prefix} ${decFormat(subtotal)}` }));
+    lot.appendChild(l1);
+    const l2parts = [];
+    if (f > 0n) l2parts.push(`手續費 ${decFormat(f)}`);
+    if (t.note) l2parts.push(`備註：${t.note}`);
+    if (l2parts.length) lot.appendChild(el('div', { class: 'l2' }, [el('div', { text: l2parts.join('　') }), el('div', { text: '編輯 ›' })]));
+    else lot.appendChild(el('div', { class: 'l2' }, [el('div', { text: '' }), el('div', { text: '編輯 ›' })]));
+    body.appendChild(lot);
+  }
+
+  $('modal-overlay').classList.add('show');
 }
 
 // ---------- 設定 ----------
@@ -850,9 +1069,13 @@ function initSettings() {
 
 function init() {
   for (const b of document.querySelectorAll('nav button')) {
-    b.addEventListener('click', () => switchView(b.dataset.view));
+    b.addEventListener('click', () => {
+      if (b.dataset.view === 'add') resetAddForm(); // 從導覽進入一律是「新增」模式
+      switchView(b.dataset.view);
+    });
   }
   $('btn-refresh').addEventListener('click', () => refreshData(true));
+  $('modal-overlay').addEventListener('click', (e) => { if (e.target.id === 'modal-overlay') closeModal(); });
 
   initAddForm();
   initSettings();

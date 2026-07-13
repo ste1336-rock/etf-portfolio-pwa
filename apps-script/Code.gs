@@ -50,6 +50,10 @@ function doPost(e) {
         return jsonOutput_({ ok: true, transactions: listTransactions_() });
       case 'addTransaction':
         return jsonOutput_(addTransaction_(req.payload));
+      case 'updateTransaction':
+        return jsonOutput_(updateTransaction_(req.payload));
+      case 'deleteTransaction':
+        return jsonOutput_(deleteTransaction_(req.payload));
       case 'getPrices':
         return jsonOutput_({ ok: true, prices: getPrices_(req.payload && req.payload.symbols) });
       default:
@@ -137,7 +141,8 @@ function listTransactions_() {
   return out;
 }
 
-function addTransaction_(p) {
+/** 驗證交易 payload；回 { ok:true, tx:{...} } 或 { ok:false, error }。add/update 共用。 */
+function validateTxPayload_(p) {
   if (!p || typeof p !== 'object') return { ok: false, error: 'missing payload' };
 
   var id = String(p.id || '').trim().toLowerCase();
@@ -167,27 +172,77 @@ function addTransaction_(p) {
 
   var note = String(p.note || '').slice(0, 200);
 
-  var sheet = mustSheet_(TX_SHEET);
+  return { ok: true, tx: {
+    id: id, tradeDate: tradeDate, symbol: symbol, name: name, market: market,
+    price: Number(price), quantity: Number(quantity), fee: Number(fee), currency: currency, note: note
+  } };
+}
+
+/** 依 id 找出資料列（1-based，含標題列）；找不到回 -1。 */
+function findTxRow_(sheet, id) {
   var lastRow = sheet.getLastRow();
-  if (lastRow > 1) {
-    var ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-    for (var i = 0; i < ids.length; i++) {
-      if (String(ids[i][0]).toLowerCase() === id) return { ok: false, error: 'duplicate id' };
-    }
+  if (lastRow < 2) return -1;
+  var ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  for (var i = 0; i < ids.length; i++) {
+    if (String(ids[i][0]).toLowerCase() === id) return i + 2;
   }
+  return -1;
+}
+
+/** 把一列的文字欄位（symbol/name/note）強制設為純文字，避免 '0050' 被轉成數字 50。 */
+function forceTextCols_(sheet, row) {
+  sheet.getRange(row, 3).setNumberFormat('@'); // symbol (C)
+  sheet.getRange(row, 4).setNumberFormat('@'); // name (D)
+  sheet.getRange(row, 10).setNumberFormat('@'); // note (J)
+}
+
+function addTransaction_(p) {
+  var v = validateTxPayload_(p);
+  if (!v.ok) return v;
+  var t = v.tx;
+
+  var sheet = mustSheet_(TX_SHEET);
+  if (findTxRow_(sheet, t.id) !== -1) return { ok: false, error: 'duplicate id' };
 
   var now = Date.now();
-  // 先把目標列的文字欄位（symbol/name/note）設成純文字，再寫值——這樣即使沒重跑 setup、
-  // 整欄格式未套用，這一列仍能保住 '0050' 的前導零，不被 Sheets 轉成數字 50。
   var targetRow = sheet.getLastRow() + 1;
-  sheet.getRange(targetRow, 3).setNumberFormat('@'); // symbol (C)
-  sheet.getRange(targetRow, 4).setNumberFormat('@'); // name (D)
-  sheet.getRange(targetRow, 10).setNumberFormat('@'); // note (J)
+  forceTextCols_(sheet, targetRow);
   // tradeDate 存純數字（20260712），createdAt/updatedAt 存 epoch 毫秒數字，
   // 全程不寫入日期字串，避免 Google Sheets 自動轉成日期物件
   sheet.getRange(targetRow, 1, 1, TX_HEADERS.length).setValues([[
-    id, tradeDate, symbol, name, market, Number(price), Number(quantity), Number(fee), currency, note, now, now
+    t.id, t.tradeDate, t.symbol, t.name, t.market, t.price, t.quantity, t.fee, t.currency, t.note, now, now
   ]]);
+  return { ok: true, id: t.id };
+}
+
+function updateTransaction_(p) {
+  var v = validateTxPayload_(p);
+  if (!v.ok) return v;
+  var t = v.tx;
+
+  var sheet = mustSheet_(TX_SHEET);
+  var row = findTxRow_(sheet, t.id);
+  if (row === -1) return { ok: false, error: 'not found' };
+
+  // 保留原始 createdAt（原始交易不可被覆蓋改寫其建立時間），只更新 updatedAt。
+  var createdAt = Number(sheet.getRange(row, 11).getValue()) || Date.now();
+  var now = Date.now();
+  forceTextCols_(sheet, row);
+  sheet.getRange(row, 1, 1, TX_HEADERS.length).setValues([[
+    t.id, t.tradeDate, t.symbol, t.name, t.market, t.price, t.quantity, t.fee, t.currency, t.note, createdAt, now
+  ]]);
+  return { ok: true, id: t.id };
+}
+
+function deleteTransaction_(p) {
+  var id = String(p && p.id || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) {
+    return { ok: false, error: 'invalid id' };
+  }
+  var sheet = mustSheet_(TX_SHEET);
+  var row = findTxRow_(sheet, id);
+  if (row === -1) return { ok: false, error: 'not found' };
+  sheet.deleteRow(row);
   return { ok: true, id: id };
 }
 

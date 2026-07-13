@@ -53,5 +53,23 @@ eq(ctx.parseDecimalString_('99999999999', false, 1e7), null, '超過上限不合
 eq(ctx.parseDecimalString_('abc', false, 1e7), null, '非數字不合法');
 eq(ctx.parseDecimalString_('123.456789012345', false, 1e7), '123.456789012345', '長小數原樣保留（不經 Number 轉換損失）');
 
+// --- validateTxPayload_（add/update 共用驗證）---
+const goodPayload = {
+  id: '11111111-1111-4111-8111-111111111111', tradeDate: 20260713,
+  symbol: '0050', name: '元大台灣50', market: 'TW', price: '105.00',
+  quantity: '2', fee: '200', currency: 'TWD', note: 'x'
+};
+const okRes = ctx.validateTxPayload_(goodPayload);
+eq(okRes.ok, true, '合法 payload 通過驗證');
+eq(okRes.tx.symbol, '0050', '驗證後保留 0050 字串（前導零不丟）');
+eq(okRes.tx.price, 105, 'price 轉為 Number');
+eq(ctx.validateTxPayload_(Object.assign({}, goodPayload, { id: 'not-a-uuid' })).ok, false, '非 UUID 被拒');
+eq(ctx.validateTxPayload_(Object.assign({}, goodPayload, { market: 'JP' })).ok, false, '未知市場被拒');
+eq(ctx.validateTxPayload_(Object.assign({}, goodPayload, { price: '0' })).ok, false, '價格 0 被拒');
+eq(ctx.validateTxPayload_(Object.assign({}, goodPayload, { quantity: '-1' })).ok, false, '負股數被拒');
+eq(ctx.validateTxPayload_(Object.assign({}, goodPayload, { fee: '' })).ok, true, '手續費空字串視為 0，通過');
+eq(ctx.validateTxPayload_(Object.assign({}, goodPayload, { currency: 'EUR' })).ok, false, '未知幣別被拒');
+eq(ctx.validateTxPayload_(Object.assign({}, goodPayload, { tradeDate: 20260231 })).ok, false, '2/31 無效日期被拒');
+
 console.log(`gas-helpers: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
