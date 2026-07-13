@@ -1,0 +1,5 @@
+.DS_Store
+node_modules/
+# Secret Key 絕不進 repo（本專案的 Key 只存在 Apps Script 指令碼屬性與手機 localStorage）
+Secrets*
+*.key

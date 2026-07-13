@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="ETF追蹤">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<title>ETF 投資追蹤</title>
+<style>
+  :root {
+    --green: #16A34A;
+    --green-dark: #15803D;
+    --red: #EF4444;
+    --gray: #6B7280;
+    --bg: #F3F4F6;
+    --card: #FFFFFF;
+    --text: #111827;
+    --border: #E5E7EB;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { font-size: 16px; }
+  body {
+    font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Helvetica Neue", sans-serif;
+    background: var(--bg); color: var(--text);
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--bg);
+    padding: calc(12px + env(safe-area-inset-top)) 16px 8px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  header h1 { font-size: 1.35rem; font-weight: 700; }
+  #btn-refresh {
+    border: none; background: var(--card); color: var(--green);
+    width: 40px; height: 40px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,.08); cursor: pointer;
+  }
+  #btn-refresh.spinning svg { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #sync-status { font-size: .75rem; color: var(--gray); padding: 0 16px 8px; min-height: 1.1em; }
+  main { padding: 0 16px 16px; display: none; }
+  main.active { display: block; }
+
+  .card {
+    background: var(--card); border-radius: 16px; padding: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 12px;
+  }
+  .asset-card {
+    background: linear-gradient(135deg, #16A34A, #15803D);
+    color: #fff; border-radius: 18px; padding: 18px 16px; margin-bottom: 12px;
+    box-shadow: 0 4px 14px rgba(22,163,74,.25);
+  }
+  .asset-card .label { font-size: .8rem; opacity: .85; }
+  .asset-card .total { font-size: 2rem; font-weight: 800; letter-spacing: -.5px; margin: 2px 0 10px; }
+  .asset-card .row { display: flex; gap: 16px; }
+  .asset-card .row > div { flex: 1; }
+  .asset-card .sub-label { font-size: .72rem; opacity: .8; }
+  .asset-card .sub-value { font-size: 1rem; font-weight: 700; }
+  .asset-card .warn { margin-top: 10px; font-size: .72rem; background: rgba(255,255,255,.18); border-radius: 8px; padding: 6px 8px; }
+
+  .section-title { font-size: .95rem; font-weight: 700; margin: 16px 0 8px; }
+  .holding {
+    background: var(--card); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.05);
+  }
+  .holding .top { display: flex; justify-content: space-between; align-items: baseline; }
+  .holding .symbol { font-weight: 800; font-size: 1.02rem; }
+  .holding .name { font-size: .72rem; color: var(--gray); margin-top: 1px; }
+  .holding .pl { text-align: right; font-weight: 700; font-size: .95rem; }
+  .holding .pl-pct { font-size: .75rem; font-weight: 600; }
+  .holding .mid { display: flex; justify-content: space-between; margin-top: 8px; font-size: .78rem; color: var(--gray); }
+  .holding .mv { font-weight: 700; color: var(--text); }
+  .holding .price-line { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: .72rem; color: var(--gray); }
+  .up { color: var(--green); }
+  .down { color: var(--red); }
+  .badge-stale {
+    display: inline-block; background: #FEF3C7; color: #B45309;
+    font-size: .65rem; border-radius: 6px; padding: 1px 6px; margin-left: 6px; font-weight: 600;
+  }
+  .badge-noprice {
+    display: inline-block; background: #FEE2E2; color: #B91C1C;
+    font-size: .65rem; border-radius: 6px; padding: 1px 6px; margin-left: 6px; font-weight: 600;
+  }
+  .empty { text-align: center; color: var(--gray); padding: 48px 16px; font-size: .9rem; }
+
+  .tx-row { background: var(--card); border-radius: 14px; padding: 12px 14px; margin-bottom: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  .tx-row .line1 { display: flex; justify-content: space-between; align-items: center; }
+  .tx-row .sym { font-weight: 700; }
+  .tx-badge { font-size: .65rem; background: #DCFCE7; color: var(--green-dark); border-radius: 6px; padding: 1px 6px; margin-left: 6px; font-weight: 700; }
+  .tx-row .amount { font-weight: 700; }
+  .tx-row .line2 { display: flex; justify-content: space-between; margin-top: 4px; font-size: .74rem; color: var(--gray); }
+  .tx-row .note { margin-top: 4px; font-size: .74rem; color: var(--gray); }
+
+  form .field { margin-bottom: 12px; }
+  form label { display: block; font-size: .78rem; color: var(--gray); margin-bottom: 4px; font-weight: 600; }
+  form input, form select {
+    width: 100%; padding: 12px; font-size: 1rem; border: 1px solid var(--border);
+    border-radius: 12px; background: var(--card); color: var(--text); appearance: none;
+  }
+  form input:focus, form select:focus { outline: 2px solid var(--green); border-color: transparent; }
+  .field-row { display: flex; gap: 10px; }
+  .field-row .field { flex: 1; }
+  .btn-primary {
+    width: 100%; padding: 14px; font-size: 1.05rem; font-weight: 700;
+    background: var(--green); color: #fff; border: none; border-radius: 14px; cursor: pointer;
+  }
+  .btn-primary:disabled { opacity: .5; }
+  .btn-secondary {
+    width: 100%; padding: 12px; font-size: .95rem; font-weight: 600;
+    background: var(--card); color: var(--green); border: 1px solid var(--border);
+    border-radius: 14px; cursor: pointer; margin-top: 10px;
+  }
+  .hint { font-size: .74rem; color: var(--gray); margin-top: 6px; line-height: 1.5; }
+  .setup-banner {
+    background: #FEF3C7; color: #92400E; border-radius: 12px; padding: 12px;
+    font-size: .82rem; line-height: 1.6; margin-bottom: 14px;
+  }
+
+  nav {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+    background: var(--card); border-top: 1px solid var(--border);
+    display: flex; padding-bottom: env(safe-area-inset-bottom);
+  }
+  nav button {
+    flex: 1; border: none; background: none; padding: 8px 0 6px;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    font-size: .68rem; color: var(--gray); cursor: pointer; font-weight: 600;
+  }
+  nav button.active { color: var(--green); }
+  nav button svg { width: 23px; height: 23px; }
+  /* 點擊一律落在 button 本體，避免事件目標落在 SVG 子節點的邊角案例 */
+  nav button svg, nav button *, #btn-refresh svg { pointer-events: none; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: calc(90px + env(safe-area-inset-bottom));
+    transform: translateX(-50%); background: rgba(17,24,39,.92); color: #fff;
+    padding: 10px 18px; border-radius: 12px; font-size: .85rem;
+    opacity: 0; pointer-events: none; transition: opacity .25s; z-index: 50;
+    max-width: 86vw; text-align: center;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="view-title">總覽</h1>
+  <button id="btn-refresh" type="button" aria-label="更新報價">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+  </button>
+</header>
+<div id="sync-status"></div>
+
+<main id="view-overview" class="active"></main>
+
+<main id="view-transactions"></main>
+
+<main id="view-add">
+  <form id="add-form" novalidate>
+    <div class="field-row">
+      <div class="field">
+        <label for="f-symbol">ETF 代號</label>
+        <input id="f-symbol" autocapitalize="characters" autocomplete="off" placeholder="VOO / 0050" required>
+      </div>
+      <div class="field">
+        <label for="f-market">市場</label>
+        <select id="f-market">
+          <option value="US">美股</option>
+          <option value="TW">台股</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label for="f-name">ETF 名稱（選填）</label>
+      <input id="f-name" autocomplete="off" placeholder="Vanguard S&amp;P 500 ETF">
+    </div>
+    <div class="field">
+      <label for="f-date">交易日期</label>
+      <input id="f-date" type="date" required>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label for="f-price">價格</label>
+        <input id="f-price" inputmode="decimal" autocomplete="off" placeholder="620.00" required>
+      </div>
+      <div class="field">
+        <label for="f-quantity">數量（股）</label>
+        <input id="f-quantity" inputmode="decimal" autocomplete="off" placeholder="5" required>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label for="f-fee">手續費</label>
+        <input id="f-fee" inputmode="decimal" autocomplete="off" placeholder="0" value="0">
+      </div>
+      <div class="field">
+        <label for="f-currency">幣別</label>
+        <select id="f-currency">
+          <option value="USD">USD</option>
+          <option value="TWD">TWD</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label for="f-note">備註（選填）</label>
+      <input id="f-note" autocomplete="off" maxlength="200">
+    </div>
+    <button class="btn-primary" id="btn-save" type="submit">儲存買入紀錄</button>
+    <p class="hint">第一版僅支援「買入」。賣出、股息、匯率換算為後續版本。</p>
+  </form>
+</main>
+
+<main id="view-settings">
+  <div id="setup-banner" class="setup-banner" style="display:none">
+    尚未完成連線設定。請依 README 完成 Google Sheet 與 Apps Script 部署後，
+    把「網頁應用程式 URL」與你設定的 Secret Key 填入下方並儲存。
+  </div>
+  <div class="card">
+    <form id="settings-form" novalidate>
+      <div class="field">
+        <label for="s-api">Apps Script API 網址（/exec 結尾）</label>
+        <input id="s-api" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec">
+      </div>
+      <div class="field">
+        <label for="s-key">Secret Key</label>
+        <input id="s-key" type="password" autocomplete="off" placeholder="與指令碼屬性 SECRET_KEY 相同">
+      </div>
+      <button class="btn-primary" type="submit">儲存設定</button>
+      <button class="btn-secondary" id="btn-test" type="button">測試連線</button>
+      <p class="hint">
+        Key 只存在這支手機的瀏覽器裡（localStorage），不會寫進程式碼或上傳到 GitHub。<br>
+        App 版本：<span id="app-version"></span>
+      </p>
+    </form>
+  </div>
+</main>
+
+<nav>
+  <button data-view="overview" class="active">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5 12 3l9 6.5V21a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M9 22V12h6v10"/></svg>
+    總覽
+  </button>
+  <button data-view="transactions">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+    交易
+  </button>
+  <button data-view="add">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+    新增
+  </button>
+  <button data-view="settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    設定
+  </button>
+</nav>
+
+<div id="toast"></div>
+
+<script id="money-math">
+/* ============================================================
+ * 定點金額運算（BigInt，小數 8 位）
+ * 金額一律「字串解析 → BigInt 定點運算 → 最後一步格式化」，
+ * 全程不經過 IEEE 754 浮點數，避免 0.1+0.2 與長小數尾差問題。
+ * 此區塊被 tests/money.test.mjs 抽出實跑測試，勿改動 script id。
+ * ============================================================ */
+'use strict';
+const DEC_SCALE_DIGITS = 8;
+const DEC_ONE = 10n ** BigInt(DEC_SCALE_DIGITS);
+const DEC_ZERO = 0n;
+const DEC_HUNDRED = 100n * DEC_ONE;
+
+/** 數字字串/數字 → BigInt（×1e8）；格式無效回 null。超過 8 位小數以四捨五入截斷。 */
+function decParse(value) {
+  if (value === null || value === undefined) return null;
+  let s = String(value).trim();
+  if (s === '' || !/^-?\d+(\.\d+)?$/.test(s)) return null;
+  let neg = false;
+  if (s[0] === '-') { neg = true; s = s.slice(1); }
+  const dot = s.indexOf('.');
+  const intPart = dot === -1 ? s : s.slice(0, dot);
+  const fracPart = dot === -1 ? '' : s.slice(dot + 1);
+  let units = BigInt(intPart) * DEC_ONE +
+    BigInt((fracPart + '0'.repeat(DEC_SCALE_DIGITS)).slice(0, DEC_SCALE_DIGITS));
+  if (fracPart.length > DEC_SCALE_DIGITS && fracPart.charCodeAt(DEC_SCALE_DIGITS) >= 0x35) units += 1n;
+  return neg ? -units : units;
+}
+
+/** n/d 四捨五入（half away from zero），d 必須 > 0n */
+function decRoundDiv(n, d) {
+  const neg = n < 0n;
+  const nn = neg ? -n : n;
+  let q = nn / d;
+  if ((nn % d) * 2n >= d) q += 1n;
+  return neg ? -q : q;
+}
+
+const decAdd = (a, b) => a + b;
+const decSub = (a, b) => a - b;
+const decMul = (a, b) => decRoundDiv(a * b, DEC_ONE);
+
+function decDiv(a, b) {
+  if (b === 0n) return null;
+  const neg = (a < 0n) !== (b < 0n);
+  const aa = a < 0n ? -a : a;
+  const bb = b < 0n ? -b : b;
+  const q = decRoundDiv(aa * DEC_ONE, bb);
+  return neg ? -q : q;
+}
+
+/** 定點值 → 固定 dp 位小數字串（四捨五入），無千分位 */
+function decToFixed(units, dp) {
+  const scaled = decRoundDiv(units, 10n ** BigInt(DEC_SCALE_DIGITS - dp));
+  const neg = scaled < 0n;
+  const s = (neg ? -scaled : scaled).toString().padStart(dp + 1, '0');
+  const intPart = dp === 0 ? s : s.slice(0, -dp);
+  const fracPart = dp === 0 ? '' : s.slice(-dp);
+  return (neg ? '-' : '') + intPart + (dp ? '.' + fracPart : '');
+}
+
+/** 定點值 → 千分位格式字串 */
+function decFormat(units, dp = 2) {
+  const fixed = decToFixed(units, dp);
+  const neg = fixed.startsWith('-');
+  const body = neg ? fixed.slice(1) : fixed;
+  const dot = body.indexOf('.');
+  const i = dot === -1 ? body : body.slice(0, dot);
+  const f = dot === -1 ? '' : body.slice(dot + 1);
+  const grouped = i.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return (neg ? '-' : '') + grouped + (f ? '.' + f : '');
+}
+
+/** 股數顯示：最多 4 位小數，去除尾端 0 */
+function decFormatQty(units) {
+  let s = decToFixed(units, 4);
+  if (s.includes('.')) s = s.replace(/0+$/, '').replace(/\.$/, '');
+  return s;
+}
+
+/* Node 測試環境輸出（瀏覽器中 module 不存在，此段不執行） */
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { DEC_ONE, DEC_ZERO, DEC_HUNDRED, decParse, decRoundDiv, decAdd, decSub, decMul, decDiv, decToFixed, decFormat, decFormatQty };
+}
+</script>
+
+<script>
+'use strict';
+
+const APP_VERSION = '1.0.0';
+
+const LS = {
+  api: 'etf.apiUrl',
+  key: 'etf.secretKey',
+  tx: 'etf.cache.transactions',
+  px: 'etf.cache.prices',
+  syncedAt: 'etf.cache.syncedAt'
+};
+
+const CURRENCY_PREFIX = { USD: 'US$', TWD: 'NT$' };
+const MARKET_LABEL = { US: '美股', TW: '台股' };
+
+const state = {
+  tx: [],            // 交易列表（伺服器或快取）
+  px: {},            // symbol → {price, currency, updatedAt, dataSource, stale, error}
+  txFromCache: true, // true = 目前顯示的是本機快取，非本次同步結果
+  pxFromCache: true,
+  lastSync: null,    // 最後成功同步時間 ms
+  loading: false
+};
+
+// ---------- 小工具 ----------
+
+function $(id) { return document.getElementById(id); }
+
+function el(tag, attrs = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') node.className = v;
+    else if (k === 'text') node.textContent = v;
+    else node.setAttribute(k, v);
+  }
+  for (const c of [].concat(children)) {
+    if (c === null || c === undefined) continue;
+    node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  }
+  return node;
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+function uuid() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
+}
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+function formatDateNum(n) { // 20260712 → 2026/07/12
+  const s = String(n);
+  if (!/^\d{8}$/.test(s)) return s;
+  return `${s.slice(0,4)}/${s.slice(4,6)}/${s.slice(6,8)}`;
+}
+
+function formatTime(ms) {
+  if (!ms || !isFinite(ms)) return '';
+  const d = new Date(ms);
+  return `${pad2(d.getMonth()+1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function dateInputToNum(v) { // '2026-07-12' → 20260712
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  return Number(v.replace(/-/g, ''));
+}
+
+function loadCache(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch { return fallback; }
+}
+
+function saveCache(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* 空間不足時不阻斷使用 */ }
+}
+
+// ---------- API ----------
+
+function hasConfig() {
+  return Boolean(localStorage.getItem(LS.api) && localStorage.getItem(LS.key));
+}
+
+async function api(action, payload) {
+  const url = localStorage.getItem(LS.api);
+  const key = localStorage.getItem(LS.key);
+  if (!url || !key) throw new Error('尚未設定 API 網址與 Secret Key');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25000);
+  try {
+    // body 為字串、未指定 Content-Type（text/plain）→ 簡單請求，不觸發 CORS preflight
+    const res = await fetch(url, {
+      method: 'POST',
+      body: JSON.stringify({ key, action, payload }),
+      signal: controller.signal
+    });
+    if (!res.ok) throw new Error(`伺服器回應 HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error === 'unauthorized' ? 'Secret Key 錯誤或未設定' : (data.error || '未知錯誤'));
+    return data;
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('連線逾時（25 秒）');
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ---------- 資料同步 ----------
+
+async function refreshData(showToastOnSuccess) {
+  if (state.loading) return;
+  if (!hasConfig()) {
+    switchView('settings');
+    toast('請先完成連線設定');
+    return;
+  }
+  state.loading = true;
+  $('btn-refresh').classList.add('spinning');
+  setSyncStatus('同步中…');
+
+  let txError = null, pxError = null;
+
+  try {
+    const data = await api('listTransactions');
+    state.tx = data.transactions || [];
+    state.txFromCache = false;
+    saveCache(LS.tx, state.tx);
+  } catch (err) {
+    txError = err.message;
+    state.tx = loadCache(LS.tx, []);
+    state.txFromCache = true;
+  }
+
+  const symbols = uniqueSymbols(state.tx);
+  if (symbols.length > 0) {
+    try {
+      const data = await api('getPrices', { symbols });
+      const map = {};
+      for (const p of (data.prices || [])) map[p.symbol] = p;
+      state.px = map;
+      state.pxFromCache = false;
+      saveCache(LS.px, state.px);
+    } catch (err) {
+      pxError = err.message;
+      state.px = loadCache(LS.px, {});
+      state.pxFromCache = true;
+    }
+  } else {
+    state.px = {};
+    state.pxFromCache = false;
+  }
+
+  if (!txError && !pxError) {
+    state.lastSync = Date.now();
+    saveCache(LS.syncedAt, state.lastSync);
+    if (showToastOnSuccess) toast('已更新');
+  } else {
+    toast(`部分資料未更新：${txError || pxError}（顯示為快取值）`);
+  }
+
+  state.loading = false;
+  $('btn-refresh').classList.remove('spinning');
+  render();
+}
+
+function uniqueSymbols(txs) {
+  const seen = new Map();
+  for (const t of txs) {
+    if (t.symbol && !seen.has(t.symbol)) seen.set(t.symbol, { symbol: t.symbol, market: t.market });
+  }
+  return [...seen.values()];
+}
+
+function setSyncStatus(text) { $('sync-status').textContent = text; }
+
+function updateSyncStatusLine() {
+  const parts = [];
+  if (state.lastSync) parts.push(`最後同步 ${formatTime(state.lastSync)}`);
+  const hasData = state.tx.length > 0 || Object.keys(state.px).length > 0;
+  if (hasData && (state.txFromCache || state.pxFromCache)) parts.push('⚠ 顯示本機快取資料（非即時）');
+  setSyncStatus(parts.join('　'));
+}
+
+// ---------- 持倉計算（加權平均成本，手續費不計入成本 — 沿用原生 App Phase 1 裁決）----------
+
+function computeHoldings(txs) {
+  const map = new Map();
+  const skipped = [];
+  for (const t of txs) {
+    const q = decParse(t.quantity);
+    const p = decParse(t.price);
+    const f = decParse(t.fee === '' || t.fee === undefined ? '0' : t.fee);
+    if (q === null || p === null || f === null || q <= 0n || p <= 0n) {
+      skipped.push(t.id);
+      continue;
+    }
+    const key = `${t.symbol}|${t.currency}`;
+    let h = map.get(key);
+    if (!h) {
+      h = { symbol: t.symbol, name: t.name, market: t.market, currency: t.currency,
+            qty: DEC_ZERO, cost: DEC_ZERO, fee: DEC_ZERO };
+      map.set(key, h);
+    }
+    h.qty = decAdd(h.qty, q);
+    h.cost = decAdd(h.cost, decMul(p, q));
+    h.fee = decAdd(h.fee, f);
+    if (t.name) h.name = t.name;
+  }
+  const holdings = [...map.values()].filter(h => h.qty > 0n);
+  for (const h of holdings) {
+    h.avgCost = decDiv(h.cost, h.qty);
+    const px = state.px[h.symbol];
+    if (px && px.price !== undefined && decParse(px.price) !== null) {
+      h.price = decParse(px.price);
+      h.priceUpdatedAt = px.updatedAt;
+      h.priceStale = Boolean(px.stale) || state.pxFromCache;
+      h.dataSource = px.dataSource || '';
+      h.marketValue = decMul(h.price, h.qty);
+      h.pl = decSub(h.marketValue, h.cost);
+      h.plPct = h.cost > 0n ? decMul(decDiv(h.pl, h.cost), DEC_HUNDRED) : null;
+    } else {
+      h.price = null; // 無報價：誠實顯示，不編造
+    }
+  }
+  holdings.sort((a, b) => a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0);
+  return { holdings, skipped };
+}
+
+/** 依幣別彙總。跨幣別禁止相加（尚無匯率換算），每個幣別一張卡。 */
+function summarizeByCurrency(holdings) {
+  const map = new Map();
+  for (const h of holdings) {
+    let s = map.get(h.currency);
+    if (!s) {
+      s = { currency: h.currency, invested: DEC_ZERO, pricedCost: DEC_ZERO,
+            marketValue: DEC_ZERO, missingPriceCount: 0, hasStale: false, count: 0 };
+      map.set(h.currency, s);
+    }
+    s.count += 1;
+    s.invested = decAdd(s.invested, h.cost);
+    if (h.price !== null) {
+      s.marketValue = decAdd(s.marketValue, h.marketValue);
+      s.pricedCost = decAdd(s.pricedCost, h.cost);
+      if (h.priceStale) s.hasStale = true;
+    } else {
+      s.missingPriceCount += 1;
+    }
+  }
+  for (const s of map.values()) {
+    s.pl = decSub(s.marketValue, s.pricedCost);
+    s.plPct = s.pricedCost > 0n ? decMul(decDiv(s.pl, s.pricedCost), DEC_HUNDRED) : null;
+  }
+  // TWD 卡在前，其次 USD
+  return [...map.values()].sort((a, b) => (a.currency === 'TWD' ? 0 : 1) - (b.currency === 'TWD' ? 0 : 1));
+}
+
+// ---------- 畫面 ----------
+
+const VIEW_TITLES = { overview: '總覽', transactions: '交易紀錄', add: '新增買入', settings: '設定' };
+
+function switchView(name) {
+  for (const m of document.querySelectorAll('main')) m.classList.remove('active');
+  $(`view-${name}`).classList.add('active');
+  for (const b of document.querySelectorAll('nav button')) {
+    b.classList.toggle('active', b.dataset.view === name);
+  }
+  $('view-title').textContent = VIEW_TITLES[name];
+  window.scrollTo(0, 0);
+}
+
+function plClass(units) { return units < 0n ? 'down' : 'up'; }
+function plSign(units) { return units < 0n ? '' : '+'; }
+
+function render() {
+  renderOverview();
+  renderTransactions();
+  updateSyncStatusLine();
+}
+
+function renderOverview() {
+  const root = $('view-overview');
+  root.replaceChildren();
+
+  if (!hasConfig()) {
+    root.appendChild(el('div', { class: 'empty', text: '尚未完成連線設定，請到「設定」分頁填入 API 網址與 Secret Key。' }));
+    return;
+  }
+  if (state.tx.length === 0) {
+    root.appendChild(el('div', { class: 'empty', text: '還沒有任何買入紀錄。點下方「新增」開始記錄第一筆。' }));
+    return;
+  }
+
+  const { holdings, skipped } = computeHoldings(state.tx);
+  const summaries = summarizeByCurrency(holdings);
+
+  for (const s of summaries) {
+    const prefix = CURRENCY_PREFIX[s.currency] || s.currency;
+    const card = el('div', { class: 'asset-card' });
+    card.appendChild(el('div', { class: 'label', text: `總資產（${s.currency}）` }));
+    card.appendChild(el('div', { class: 'total', text: `${prefix} ${decFormat(s.marketValue)}` }));
+    const row = el('div', { class: 'row' });
+    row.appendChild(el('div', {}, [
+      el('div', { class: 'sub-label', text: '投入本金' }),
+      el('div', { class: 'sub-value', text: decFormat(s.invested) })
+    ]));
+    row.appendChild(el('div', {}, [
+      el('div', { class: 'sub-label', text: '未實現損益' }),
+      el('div', { class: 'sub-value', text: `${plSign(s.pl)}${decFormat(s.pl)}` })
+    ]));
+    row.appendChild(el('div', {}, [
+      el('div', { class: 'sub-label', text: '報酬率' }),
+      el('div', { class: 'sub-value', text: s.plPct === null ? '—' : `${plSign(s.plPct)}${decToFixed(s.plPct, 2)}%` })
+    ]));
+    card.appendChild(row);
+    if (s.missingPriceCount > 0) {
+      card.appendChild(el('div', { class: 'warn', text: `${s.missingPriceCount} 檔持倉目前無報價，總資產與損益未包含該部位。` }));
+    }
+    if (s.hasStale) {
+      card.appendChild(el('div', { class: 'warn', text: '部分報價非即時（顯示最後成功抓到的價格）。' }));
+    }
+    root.appendChild(card);
+  }
+
+  root.appendChild(el('div', { class: 'section-title', text: `我的持倉（${holdings.length}）` }));
+
+  for (const h of holdings) {
+    const prefix = CURRENCY_PREFIX[h.currency] || h.currency;
+    const item = el('div', { class: 'holding' });
+
+    const top = el('div', { class: 'top' });
+    const left = el('div', {}, [
+      el('div', { class: 'symbol' }, [
+        h.symbol,
+        h.price === null ? el('span', { class: 'badge-noprice', text: '無報價' }) :
+          (h.priceStale ? el('span', { class: 'badge-stale', text: '非即時' }) : null)
+      ]),
+      el('div', { class: 'name', text: `${h.name || ''}${h.name ? '　' : ''}${MARKET_LABEL[h.market] || h.market}` })
+    ]);
+    top.appendChild(left);
+    if (h.price !== null) {
+      top.appendChild(el('div', { class: `pl ${plClass(h.pl)}` }, [
+        `${plSign(h.pl)}${decFormat(h.pl)}`,
+        el('div', { class: 'pl-pct', text: h.plPct === null ? '' : `${plSign(h.plPct)}${decToFixed(h.plPct, 2)}%` })
+      ]));
+    }
+    item.appendChild(top);
+
+    const mid = el('div', { class: 'mid' });
+    mid.appendChild(el('div', { text: `${decFormatQty(h.qty)} 股｜均價 ${decFormat(h.avgCost)}` }));
+    mid.appendChild(el('div', { class: 'mv', text: h.price === null ? `成本 ${prefix} ${decFormat(h.cost)}` : `${prefix} ${decFormat(h.marketValue)}` }));
+    item.appendChild(mid);
+
+    if (h.price !== null) {
+      const pl = el('div', { class: 'price-line' });
+      pl.appendChild(el('div', { text: `現價 ${decFormat(h.price)}` }));
+      pl.appendChild(el('div', { text: `更新 ${formatTime(h.priceUpdatedAt)}${h.dataSource ? '（' + h.dataSource + '）' : ''}` }));
+      item.appendChild(pl);
+    }
+    root.appendChild(item);
+  }
+
+  if (skipped.length > 0) {
+    root.appendChild(el('div', { class: 'hint', text: `⚠ ${skipped.length} 筆交易的數字欄位無法解析，已略過不計（請到 Google Sheet 檢查）。` }));
+  }
+}
+
+function renderTransactions() {
+  const root = $('view-transactions');
+  root.replaceChildren();
+  if (state.tx.length === 0) {
+    root.appendChild(el('div', { class: 'empty', text: '還沒有任何交易紀錄。' }));
+    return;
+  }
+  const sorted = [...state.tx].sort((a, b) => (b.tradeDate - a.tradeDate) || (b.createdAt - a.createdAt));
+  for (const t of sorted) {
+    const prefix = CURRENCY_PREFIX[t.currency] || t.currency;
+    const p = decParse(t.price);
+    const q = decParse(t.quantity);
+    const f = decParse(t.fee === '' ? '0' : t.fee) ?? DEC_ZERO;
+    const total = (p !== null && q !== null) ? decAdd(decMul(p, q), f) : null;
+
+    const row = el('div', { class: 'tx-row' });
+    const line1 = el('div', { class: 'line1' });
+    line1.appendChild(el('div', { class: 'sym' }, [t.symbol, el('span', { class: 'tx-badge', text: '買入' })]));
+    line1.appendChild(el('div', { class: 'amount', text: total === null ? '—' : `-${prefix} ${decFormat(total)}` }));
+    row.appendChild(line1);
+
+    const line2 = el('div', { class: 'line2' });
+    line2.appendChild(el('div', { text: formatDateNum(t.tradeDate) }));
+    line2.appendChild(el('div', { text: `${decFormatQty(q ?? DEC_ZERO)} 股 @ ${p === null ? '?' : decFormat(p)}${f > 0n ? '｜手續費 ' + decFormat(f) : ''}` }));
+    row.appendChild(line2);
+
+    if (t.note) row.appendChild(el('div', { class: 'note', text: `備註：${t.note}` }));
+    root.appendChild(row);
+  }
+}
+
+// ---------- 新增交易 ----------
+
+function initAddForm() {
+  const form = $('add-form');
+  $('f-date').value = new Date().toISOString().slice(0, 10);
+
+  $('f-market').addEventListener('change', () => {
+    $('f-currency').value = $('f-market').value === 'TW' ? 'TWD' : 'USD';
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const symbol = $('f-symbol').value.trim().toUpperCase();
+    const market = $('f-market').value;
+    const name = $('f-name').value.trim();
+    const tradeDate = dateInputToNum($('f-date').value);
+    const price = $('f-price').value.trim();
+    const quantity = $('f-quantity').value.trim();
+    const fee = $('f-fee').value.trim() || '0';
+    const currency = $('f-currency').value;
+    const note = $('f-note').value.trim();
+
+    if (!/^[A-Z0-9.]{1,16}$/.test(symbol)) return toast('代號格式不正確（英數字，例：VOO、0050）');
+    if (tradeDate === null) return toast('請選擇交易日期');
+    const pU = decParse(price), qU = decParse(quantity), fU = decParse(fee);
+    if (pU === null || pU <= 0n) return toast('價格必須是大於 0 的數字');
+    if (qU === null || qU <= 0n) return toast('數量必須是大於 0 的數字');
+    if (fU === null || fU < 0n) return toast('手續費必須是 0 或正數');
+
+    const payload = { id: uuid(), tradeDate, symbol, name, market, price, quantity, fee, currency, note };
+
+    const btn = $('btn-save');
+    btn.disabled = true;
+    btn.textContent = '儲存中…';
+    try {
+      await api('addTransaction', payload);
+      toast('已儲存');
+      form.reset();
+      $('f-date').value = new Date().toISOString().slice(0, 10);
+      $('f-fee').value = '0';
+      $('f-currency').value = market === 'TW' ? 'TWD' : 'USD';
+      switchView('overview');
+      await refreshData(false);
+    } catch (err) {
+      toast(`儲存失敗：${err.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '儲存買入紀錄';
+    }
+  });
+}
+
+// ---------- 設定 ----------
+
+function initSettings() {
+  $('app-version').textContent = APP_VERSION;
+  $('s-api').value = localStorage.getItem(LS.api) || '';
+  $('s-key').value = localStorage.getItem(LS.key) || '';
+  $('setup-banner').style.display = hasConfig() ? 'none' : 'block';
+
+  $('settings-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const url = $('s-api').value.trim();
+    const key = $('s-key').value.trim();
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url)) {
+      return toast('API 網址格式不正確，應為 https://script.google.com/macros/s/…/exec');
+    }
+    if (key.length < 12) return toast('Secret Key 太短（至少 12 字元）');
+    localStorage.setItem(LS.api, url);
+    localStorage.setItem(LS.key, key);
+    $('setup-banner').style.display = 'none';
+    toast('設定已儲存');
+    refreshData(true);
+  });
+
+  $('btn-test').addEventListener('click', async () => {
+    try {
+      await api('ping');
+      toast('✓ 連線成功，Key 驗證通過');
+    } catch (err) {
+      toast(`連線失敗：${err.message}`);
+    }
+  });
+}
+
+// ---------- 啟動 ----------
+
+function init() {
+  for (const b of document.querySelectorAll('nav button')) {
+    b.addEventListener('click', () => switchView(b.dataset.view));
+  }
+  $('btn-refresh').addEventListener('click', () => refreshData(true));
+
+  initAddForm();
+  initSettings();
+
+  // 先用本機快取畫出畫面（標記非即時），再嘗試同步
+  state.tx = loadCache(LS.tx, []);
+  state.px = loadCache(LS.px, {});
+  state.lastSync = loadCache(LS.syncedAt, null);
+  render();
+
+  if (hasConfig()) {
+    refreshData(false);
+  } else {
+    switchView('settings');
+  }
+}
+
+init();
+</script>
+</body>
+</html>
