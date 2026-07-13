@@ -508,7 +508,7 @@ function computePositions(txs, priceMap) {
   for (const list of groups.values()) {
     // 依交易日→建立時間排序，確保賣出時的平均成本用的是當下狀態
     list.sort((a, b) => (a.tradeDate - b.tradeDate) || (a.createdAt - b.createdAt));
-    let qty = DEC_ZERO, cost = DEC_ZERO, buyFees = DEC_ZERO;
+    let qty = DEC_ZERO, cost = DEC_ZERO, buyFees = DEC_ZERO, buyTax = DEC_ZERO;
     let realized = DEC_ZERO, sellFees = DEC_ZERO, sellTax = DEC_ZERO;
     let boughtQty = DEC_ZERO, soldQty = DEC_ZERO, oversold = false;
     let name = '', market = '', symbol = '', currency = '';
@@ -516,8 +516,9 @@ function computePositions(txs, priceMap) {
       symbol = t.symbol; currency = t.currency; market = t.market; if (t.name) name = t.name;
       if (t.type === 'buy') {
         qty = decAdd(qty, t.q);
-        cost = decAdd(cost, decMul(t.p, t.q)); // 成本不含手續費（沿用既有裁決）
+        cost = decAdd(cost, decMul(t.p, t.q)); // 成本不含手續費/稅（沿用既有裁決）
         buyFees = decAdd(buyFees, t.f);
+        buyTax = decAdd(buyTax, t.tax); // 買入若有稅也要記，不可靜默丟失
         boughtQty = decAdd(boughtQty, t.q);
       } else {
         let sq = t.q;
@@ -548,8 +549,8 @@ function computePositions(txs, priceMap) {
     }
     const pos = {
       symbol, currency, market, name,
-      qty, cost, buyFees, realized, sellFees, sellTax,
-      feesAndTax: decAdd(decAdd(buyFees, sellFees), sellTax),
+      qty, cost, buyFees, buyTax, realized, sellFees, sellTax,
+      feesAndTax: decAdd(decAdd(decAdd(buyFees, buyTax), sellFees), sellTax),
       boughtQty, soldQty, oversold,
       avgCost: qty > 0n ? decDiv(cost, qty) : DEC_ZERO,
       price: null
@@ -1257,9 +1258,9 @@ function renderTransactions() {
     const q = decParse(t.quantity);
     const f = decParse(t.fee === '' ? '0' : t.fee) ?? DEC_ZERO;
     const tax = decParse(t.tax === '' || t.tax == null ? '0' : t.tax) ?? DEC_ZERO;
-    // 買入：現金流出＝價×量＋手續費；賣出：現金流入＝價×量−手續費−稅
+    // 買入：現金流出＝價×量＋手續費＋稅；賣出：現金流入＝價×量−手續費−稅
     const gross = (p !== null && q !== null) ? decMul(p, q) : null;
-    const total = gross === null ? null : (isSell ? decSub(decSub(gross, f), tax) : decAdd(gross, f));
+    const total = gross === null ? null : (isSell ? decSub(decSub(gross, f), tax) : decAdd(decAdd(gross, f), tax));
 
     const row = el('div', { class: 'tx-row' });
     row.addEventListener('click', () => openTxEditor(t));
@@ -1513,7 +1514,7 @@ function openHoldingDetail(symbol, currency) {
     const f = decParse(t.fee === '' ? '0' : t.fee) ?? DEC_ZERO;
     const tax = decParse(t.tax === '' || t.tax == null ? '0' : t.tax) ?? DEC_ZERO;
     const gross = (p !== null && q !== null) ? decMul(p, q) : null;
-    const subtotal = gross === null ? null : (isSell ? decSub(decSub(gross, f), tax) : decAdd(gross, f));
+    const subtotal = gross === null ? null : (isSell ? decSub(decSub(gross, f), tax) : decAdd(decAdd(gross, f), tax));
     const lot = el('div', { class: 'lot' });
     lot.addEventListener('click', () => openTxEditor(t));
     const l1 = el('div', { class: 'l1' });

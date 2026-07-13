@@ -174,6 +174,28 @@ function pos1(txs, priceMap) { return computePositions(txs, priceMap).positions[
   eq(s.hasSell, true, 'G 有賣出紀錄');
 }
 
+// H0. 稽核迴歸：買入的稅不可被靜默丟失（進 feesAndTax，但不進成本基礎）
+{
+  const p = pos1([tx({ quantity: '10', price: '100', fee: '5', tax: '7' })], {});
+  eq(decToFixed(p.cost, 2), '1000.00', 'H0 成本仍不含買入稅（維持既有裁決）');
+  eq(decToFixed(p.buyTax, 2), '7.00', 'H0 買入稅有被記錄');
+  eq(decToFixed(p.feesAndTax, 2), '12.00', 'H0 feesAndTax = 買手續費5 + 買稅7（修正前會漏掉稅）');
+}
+
+// H1. 稽核：部分賣出後成本基礎「守恆」——剩餘成本 + 各次賣出對應成本 = 原始總成本（不漏錢）
+{
+  // 買 3@100（總成本 300，均價無法整除），逐股賣光
+  const { positions } = computePositions([
+    tx({ quantity: '3', price: '100' }),
+    tx({ type: 'sell', quantity: '1', price: '150', tradeDate: 20260102 }),
+    tx({ type: 'sell', quantity: '1', price: '150', tradeDate: 20260103 }),
+    tx({ type: 'sell', quantity: '1', price: '150', tradeDate: 20260104 })
+  ], {});
+  const p = positions[0];
+  eq(decToFixed(p.cost, 8), '0.00000000', 'H1 全部賣光後剩餘成本歸零（無殘留、無漏錢）');
+  eq(decToFixed(p.realized, 2), '150.00', 'H1 已實現 = 賣出450 − 原始成本300 = 150（守恆）');
+}
+
 // H. 精度：長小數賣出不產生浮點尾差
 {
   const p = pos1([
