@@ -3,3 +3,6 @@ node_modules/
 # Secret Key 絕不進 repo（本專案的 Key 只存在 Apps Script 指令碼屬性與手機 localStorage）
 Secrets*
 *.key
+
+# 內含個人財務數據的需求文件，只留本機，永不進 repo（2026-07-14 已從歷史清除）
+投資追蹤App_*.md
