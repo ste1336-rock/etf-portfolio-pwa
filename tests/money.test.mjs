@@ -198,6 +198,47 @@ function pos1(txs, priceMap) { return computePositions(txs, priceMap).positions[
   eq(decToFixed(p.realized, 2), '150.00', 'H1 已實現 = 賣出450 − 原始成本300 = 150（守恆）');
 }
 
+// ===== P0 驗收條件（含費成本基礎）=====
+
+// AC1：0050 案例 — 2股×105，手續費200，現價105.8 → 投入本金410、均價205、報酬率-48.39%
+{
+  const p = pos1([tx({ symbol: '0050', currency: 'TWD', market: 'TW', quantity: '2', price: '105', fee: '200' })],
+    { '0050': { price: '105.8', updatedAt: 1, stale: false } });
+  eq(decToFixed(p.cost, 2), '410.00', 'AC1 投入本金(含費成本基礎)=410');
+  eq(decToFixed(p.avgCost, 2), '205.00', 'AC1 均價=205');
+  eq(decToFixed(p.unrealizedPct, 2), '-48.39', 'AC1 報酬率=-48.39%（-198.40/410，正確四捨五入；需求書寫-48.38為手算進位差）');
+  eq(decToFixed(p.shareCost, 2), '210.00', 'AC1 純股款成本(不含費)=210，供對照');
+}
+
+// AC2：手續費為 0 的交易，結果與「純股款」一致（回歸）
+{
+  const p = pos1([tx({ symbol: 'VT', quantity: '4', price: '100', fee: '0', tax: '0' })], {});
+  eq(decToFixed(p.cost, 2), '400.00', 'AC2 手續費0 → 成本=價×量，無變化');
+  eq(p.cost, p.shareCost, 'AC2 手續費0 → 含費成本 == 純股款成本');
+  eq(decToFixed(p.avgCost, 2), '100.00', 'AC2 手續費0 → 均價=價');
+}
+
+// AC3：多筆買入同標的 → 均價=(Σ含費成本)/(Σ股數)，非各筆均價算術平均
+{
+  const p = pos1([
+    tx({ symbol: 'QQQ', quantity: '2', price: '105', fee: '200' }),          // 含費成本410，該筆均價205
+    tx({ symbol: 'QQQ', quantity: '8', price: '110', fee: '40', tradeDate: 20260202 }) // 含費成本920，該筆均價115
+  ], {});
+  eq(decToFixed(p.cost, 2), '1330.00', 'AC3 Σ含費成本=410+920=1330');
+  eq(decToFixed(p.avgCost, 2), '133.00', 'AC3 加權均價=1330/10=133（非(205+115)/2=160）');
+  eq(decToFixed(p.shareCost, 2), '1090.00', 'AC3 純股款成本=210+880=1090');
+}
+
+// AC 附加：純股款成本於部分賣出後按比例扣減
+{
+  const p = pos1([
+    tx({ symbol: 'SPY', quantity: '10', price: '100', fee: '50' }),                 // 含費1050、純股款1000
+    tx({ symbol: 'SPY', type: 'sell', quantity: '4', price: '120', tradeDate: 20260202 })
+  ], {});
+  eq(decToFixed(p.shareCost, 2), '600.00', 'AC附 賣4剩6：純股款 1000×6/10=600');
+  eq(decToFixed(p.cost, 2), '630.00', 'AC附 賣4剩6：含費成本 1050×6/10=630');
+}
+
 // H. 精度：長小數賣出不產生浮點尾差
 {
   const p = pos1([

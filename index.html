@@ -508,7 +508,7 @@ function computePositions(txs, priceMap) {
   for (const list of groups.values()) {
     // 依交易日→建立時間排序，確保賣出時的平均成本用的是當下狀態
     list.sort((a, b) => (a.tradeDate - b.tradeDate) || (a.createdAt - b.createdAt));
-    let qty = DEC_ZERO, cost = DEC_ZERO, buyFees = DEC_ZERO, buyTax = DEC_ZERO;
+    let qty = DEC_ZERO, cost = DEC_ZERO, shareCost = DEC_ZERO, buyFees = DEC_ZERO, buyTax = DEC_ZERO;
     let realized = DEC_ZERO, sellFees = DEC_ZERO, sellTax = DEC_ZERO;
     let boughtQty = DEC_ZERO, soldQty = DEC_ZERO, oversold = false;
     let name = '', market = '', symbol = '', currency = '';
@@ -518,6 +518,7 @@ function computePositions(txs, priceMap) {
         qty = decAdd(qty, t.q);
         // 成本基礎 = 價×量 + 買入手續費 + 買入稅（使用者裁決：取得成本併入）
         cost = decAdd(cost, decAdd(decAdd(decMul(t.p, t.q), t.f), t.tax));
+        shareCost = decAdd(shareCost, decMul(t.p, t.q)); // 純股款成本（不含費），供對照，非報酬率分母
         buyFees = decAdd(buyFees, t.f); // 仍分別記錄，供明細透明呈現
         buyTax = decAdd(buyTax, t.tax);
         boughtQty = decAdd(boughtQty, t.q);
@@ -533,8 +534,11 @@ function computePositions(txs, priceMap) {
           realized = decAdd(realized, eventPl);
           sellFees = decAdd(sellFees, t.f);
           sellTax = decAdd(sellTax, t.tax);
+          // 純股款成本同步按比例扣減（不含費），使剩餘 shareCost = 剩餘股數的純股款成本
+          const shareCostOfSold = decMul(decDiv(shareCost, qty), sq);
           qty = decSub(qty, sq);
           cost = decSub(cost, costOfSold);
+          shareCost = decSub(shareCost, shareCostOfSold);
           soldQty = decAdd(soldQty, sq);
           realizedEvents.push({
             id: t.id, symbol: t.symbol, currency: t.currency, market: t.market, name: t.name || '',
@@ -550,10 +554,11 @@ function computePositions(txs, priceMap) {
     }
     const pos = {
       symbol, currency, market, name,
-      qty, cost, buyFees, buyTax, realized, sellFees, sellTax,
+      qty, cost, shareCost, buyFees, buyTax, realized, sellFees, sellTax,
       feesAndTax: decAdd(decAdd(decAdd(buyFees, buyTax), sellFees), sellTax),
       boughtQty, soldQty, oversold,
-      avgCost: qty > 0n ? decDiv(cost, qty) : DEC_ZERO,
+      avgCost: qty > 0n ? decDiv(cost, qty) : DEC_ZERO,        // 含費均價（報酬率分母用）
+      shareAvgCost: qty > 0n ? decDiv(shareCost, qty) : DEC_ZERO, // 純股款均價（對照用）
       price: null
     };
     const px = priceMap[symbol];
@@ -679,7 +684,7 @@ if (typeof module !== 'undefined' && module.exports) {
 <script>
 'use strict';
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.1';
 
 const LS = {
   api: 'etf.apiUrl',
@@ -1493,8 +1498,10 @@ function openHoldingDetail(symbol, currency) {
   const grid = el('div', { class: 'stat-grid' });
   grid.appendChild(statCell('持有股數', `${decFormatQty(h.qty)} 股`));
   if (held) {
-    grid.appendChild(statCell('平均成本', `${prefix} ${decFormat(h.avgCost)}`));
-    grid.appendChild(statCell('剩餘成本', `${prefix} ${decFormat(h.cost)}`));
+    grid.appendChild(statCell('平均成本（含費）', `${prefix} ${decFormat(h.avgCost)}`));
+    grid.appendChild(statCell('剩餘成本（含費）', `${prefix} ${decFormat(h.cost)}`));
+    grid.appendChild(statCell('純股款成本（不含費）', `${prefix} ${decFormat(h.shareCost)}`));
+    grid.appendChild(statCell('純股款均價', `${prefix} ${decFormat(h.shareAvgCost)}`));
   }
   if (h.soldQty > 0n) {
     grid.appendChild(statCell('已實現損益', `${plSign(h.realized)}${decFormat(h.realized)}`, plClass(h.realized)));
